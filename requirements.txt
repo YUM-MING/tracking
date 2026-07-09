@@ -2,3 +2,5 @@ ultralytics>=8.3.0
 mediapipe>=0.10.14
 opencv-python>=4.9.0
 numpy>=1.26
+psutil>=5.9            # 리소스 모니터링 / CPU 친화도
+websocket-client>=1.7  # 서버 이벤트 전송 (ws_url 사용 시)

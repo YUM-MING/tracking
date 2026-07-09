@@ -39,7 +39,8 @@ class PersonState:
 
 
 class StateMachine:
-    FALL_CONFIRM_FRAMES = 5  # N프레임 연속 수평 자세일 때만 확정
+    FALL_CONFIRM_FRAMES = 5  # N회 연속 수평 자세일 때만 확정
+                             # (프레임 스킵 적용 시 "추론 프레임" 기준 — 30fps·스킵5면 약 1초)
 
     def __init__(self, cfg: PipelineConfig, event_queue: "queue.Queue[Event]"):
         self.cfg = cfg
@@ -114,14 +115,16 @@ class StateMachine:
 
 class EventWorker(threading.Thread):
     """
-    이벤트 큐 소비자. 실제 배포에서는 여기서 오디오 재생(playsound / GPIO 앰프),
-    MQTT 발행, 관제 대시보드 푸시 등을 수행한다.
+    이벤트 큐 소비자. 로컬 처리(오디오 재생 등)와 서버 전송(웹소켓)을 담당.
+    실제 배포에서는 handle()에서 오디오 재생(playsound / GPIO 앰프),
+    안내방송 트리거 등을 수행한다.
     """
     daemon = True
 
-    def __init__(self, event_queue: "queue.Queue[Event]"):
+    def __init__(self, event_queue: "queue.Queue[Event]", sender=None):
         super().__init__(name="event-worker")
         self.q = event_queue
+        self.sender = sender          # event_sender.WebSocketSender (없으면 로그만)
         self._stop = threading.Event()
 
     def run(self):
@@ -137,6 +140,16 @@ class EventWorker(threading.Thread):
         # TODO: 실제 오디오/알림 연동 지점
         # 예) subprocess.Popen(["aplay", AUDIO_MAP[ev.kind]])
         log.warning("[EVENT] %s | %s", ev.kind, ev.message)
+
+        # 서버로는 비식별 메타데이터(JSON)만 전송
+        if self.sender is not None:
+            self.sender.send({
+                "type": ev.kind,
+                "track_id": ev.track_id,
+                "ts": time.time(),        # 서버 기록용 벽시계 시각
+                "message": ev.message,
+                "meta": {},
+            })
 
     def stop(self):
         self._stop.set()

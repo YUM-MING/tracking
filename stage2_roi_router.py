@@ -77,6 +77,14 @@ class DynamicROIRouter:
             cx, cy = p.center
             reason: Optional[str] = None
 
+            # 테이블 체류 타이머는 트리거 우선순위와 무관하게 구역 기준으로만 관리
+            # (키오스크로 이동해도 타이머가 남는 오탐 방지)
+            in_table = self.cfg.table_zone.contains(cx, cy)
+            if in_table:
+                enter = self._table_enter_ts.setdefault(p.track_id, now)
+            else:
+                self._table_enter_ts.pop(p.track_id, None)
+
             # 조건 3: 쓰러짐 징후 (최우선)
             if self._check_fall(p):
                 reason = "fall_suspect"
@@ -86,13 +94,8 @@ class DynamicROIRouter:
                 reason = "kiosk_enter"
 
             # 조건 2: 테이블 구역 정체
-            elif self.cfg.table_zone.contains(cx, cy):
-                enter = self._table_enter_ts.setdefault(p.track_id, now)
-                if now - enter >= self.cfg.table_dwell_trigger_sec:
-                    reason = "table_dwell"
-            else:
-                # 테이블 구역을 벗어나면 체류 타이머 리셋
-                self._table_enter_ts.pop(p.track_id, None)
+            elif in_table and now - enter >= self.cfg.table_dwell_trigger_sec:
+                reason = "table_dwell"
 
             if reason:
                 crop, origin = self._crop_view(frame, p)
