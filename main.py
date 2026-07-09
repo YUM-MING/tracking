@@ -43,6 +43,26 @@ REASON_COLOR = {
     "table_dwell": (255, 150, 0),
 }
 
+# COCO 17 키포인트 연결선 (스켈레톤 시각화용)
+SKELETON_EDGES = [
+    (0, 1), (0, 2), (1, 3), (2, 4),            # 얼굴 (코-눈-귀)
+    (5, 6), (5, 7), (7, 9), (6, 8), (8, 10),   # 어깨-팔
+    (5, 11), (6, 12), (11, 12),                # 몸통
+    (11, 13), (13, 15), (12, 14), (14, 16),    # 다리
+]
+
+
+def draw_skeleton(frame, kp):
+    """YOLO 17키포인트 뼈대 그리기. (0,0)은 미검출 포인트라 건너뛴다."""
+    for x, y in kp:
+        if x > 0 or y > 0:
+            cv2.circle(frame, (int(x), int(y)), 3, (0, 255, 255), -1)
+    for a, b in SKELETON_EDGES:
+        ax, ay = kp[a]
+        bx, by = kp[b]
+        if (ax > 0 or ay > 0) and (bx > 0 or by > 0):
+            cv2.line(frame, (int(ax), int(ay)), (int(bx), int(by)), (0, 255, 255), 1)
+
 
 def _stdin_watcher(stop_flag: threading.Event):
     """터미널에서 q<Enter> 입력으로 종료 (영상 창 포커스 없이도 동작)."""
@@ -65,18 +85,28 @@ def draw_debug(frame, people, targets, router, infer_fps):
         cv2.putText(frame, z.name, (z.x1 + 4, z.y1 + 18),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
 
+    frame_w = frame.shape[1]
     target_ids = {t.track_id: t.reason for t in targets}
     for p in people:
         x1, y1, x2, y2 = map(int, p.bbox)
         reason = target_ids.get(p.track_id)
         color = REASON_COLOR.get(reason, (0, 255, 0))
         cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+
+        # 스켈레톤이 실제로 잡히는지 눈으로 확인할 수 있게 뼈대 표시
+        if p.keypoints17 is not None:
+            draw_skeleton(frame, p.keypoints17)
+
         label = f"ID{p.track_id}"
         if reason:
             label += f" [{reason}]"
         dwell = router.table_dwell_seconds(p.track_id)
         if dwell > 0:
             label += f" {int(dwell)}s"
+        # 키오스크 근접 판정에 쓰는 얼굴 비율을 그대로 표시 (임계값 튜닝용)
+        fw = p.face_width()
+        if fw is not None:
+            label += f" face{fw / frame_w:.2f}"
         cv2.putText(frame, label, (x1, max(y1 - 6, 12)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
 

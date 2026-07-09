@@ -39,6 +39,26 @@ class TrackedPerson:
         h = max(y2 - y1, 1e-6)
         return float((x2 - x1) / h)
 
+    def face_width(self) -> Optional[float]:
+        """
+        머리 폭(px): 양귀(3,4) 간격, 귀가 안 잡히면 양눈(1,2) 간격×2로 근사.
+        얼굴 키포인트 미검출(뒤돌아 있음 등)이면 None.
+        키오스크 근접 판정은 이 값을 화면 가로로 나눈 '비율'로 한다.
+        """
+        kp = self.keypoints17
+        if kp is None or len(kp) < 5:
+            return None
+
+        def valid(i) -> bool:
+            x, y = kp[i]
+            return x > 0 or y > 0
+
+        if valid(3) and valid(4):                       # left_ear, right_ear
+            return float(abs(kp[3][0] - kp[4][0]))
+        if valid(1) and valid(2):                       # left_eye, right_eye
+            return float(abs(kp[1][0] - kp[2][0]) * 2.0)
+        return None
+
 
 class GlobalDetector:
     def __init__(self, cfg: PipelineConfig):

@@ -91,8 +91,9 @@ class LocalPrecisionAnalyzer:
             res.torso_horizontal = abs(sh_cy - hp_cy) < abs(sh_cx - hp_cx)
 
         # ── FaceDetection 6키포인트 (시선/얼굴 방향, 비율 기반) ──
-        # 거리 게이트: 크롭이 작으면(원거리) 얼굴 분석 자체를 생략해 연산 절약
-        if self.face is not None and target.crop_view.shape[0] >= self.cfg.face_min_crop_h:
+        # 거리 게이트: 크롭이 화면 대비 작으면(원거리) 얼굴 분석을 생략해 연산 절약
+        crop_frac = target.crop_view.shape[0] / max(target.frame_h, 1)
+        if self.face is not None and crop_frac >= self.cfg.face_min_crop_frac:
             face_out = self.face.process(rgb)
             if face_out.detections:
                 res.face_detected = True

@@ -30,6 +30,7 @@ class PrecisionTarget:
     crop_view: np.ndarray        # 원본 프레임의 뷰 (zero-copy)
     crop_origin: tuple           # 크롭의 원본 좌표 (x1, y1) — 좌표 역변환용
     person: TrackedPerson
+    frame_h: int = 720           # 원본 프레임 세로 — 크롭 크기를 '비율'로 판정하기 위함
 
 
 class DynamicROIRouter:
@@ -67,15 +68,22 @@ class DynamicROIRouter:
                 return True
         return False
 
-    def is_kiosk_near(self, p: TrackedPerson, frame_h: int) -> bool:
-        """BBox 세로가 화면 세로의 일정 비율 이상 = 키오스크 근접(사용 중)."""
-        bbox_h = float(p.bbox[3] - p.bbox[1])
-        return bbox_h / max(frame_h, 1) >= self.cfg.kiosk_near_h_frac
+    def is_kiosk_near(self, p: TrackedPerson, frame_w: int) -> bool:
+        """
+        얼굴(머리 폭)이 화면 가로 대비 일정 비율 이상 = 키오스크 사용 중.
+        몸통 BBox는 앉은 자세/상반신만 잡혀도 커져서 애매하므로 쓰지 않는다.
+        키오스크 사용자는 화면(카메라)을 향해 얼굴을 들이밀기 때문에
+        얼굴 크기가 가장 확실한 근접 신호다.
+        """
+        fw = p.face_width()
+        if fw is None:
+            return False
+        return fw / max(frame_w, 1) >= self.cfg.kiosk_face_w_frac
 
     # ── 메인 라우팅 ────────────────────────────────────────
     def route(self, frame: np.ndarray, people: List[TrackedPerson]) -> List[PrecisionTarget]:
         now = time.monotonic()
-        frame_h = frame.shape[0]
+        frame_h, frame_w = frame.shape[:2]
         targets: List[PrecisionTarget] = []
 
         for p in people:
@@ -83,9 +91,9 @@ class DynamicROIRouter:
             cx, cy = p.center
             reason: Optional[str] = None
 
-            # 키오스크 판정: near 모드(부착 카메라)는 BBox 크기, zone 모드는 화면 구역
+            # 키오스크 판정: near 모드(부착 카메라)는 얼굴 크기 비율, zone 모드는 화면 구역
             if self.cfg.kiosk_trigger_mode == "near":
-                at_kiosk = self.is_kiosk_near(p, frame_h)
+                at_kiosk = self.is_kiosk_near(p, frame_w)
             else:
                 at_kiosk = self.cfg.kiosk_zone.contains(cx, cy)
 
@@ -121,6 +129,7 @@ class DynamicROIRouter:
                             crop_view=crop,
                             crop_origin=origin,
                             person=p,
+                            frame_h=frame_h,
                         )
                     )
 

@@ -53,10 +53,12 @@ class PipelineConfig:
 
     # ── 2단계: 동적 ROI 트리거 조건 ────────────────────────
     # 키오스크 판정: 카메라가 키오스크 본체에 달리는 배치에서는 "구역"이 아니라
-    # "근접(BBox 크기)"이 맞는 기준이다. 사용자가 다가오면 화면 대부분을 가리므로
-    # BBox 세로가 화면 세로의 일정 비율 이상이면 키오스크 사용 중으로 본다.
+    # "근접"이 기준이다. 몸통 BBox 크기는 앉은 자세/상반신만 잡혀도 커져서 애매하므로
+    # (멀리서도 오탐), 실제 사용자처럼 **얼굴이 카메라에 가까울 때** 커지는
+    # 머리 폭(양귀 간격) / 화면 가로 **비율**로 판정한다. 길이(px) 기준 금지.
     kiosk_trigger_mode: str = "near"      # "near": 근접(키오스크 부착 카메라) | "zone": 화면 구역(천장/벽 카메라)
-    kiosk_near_h_frac: float = 0.5        # BBox 세로 ≥ 화면 세로의 50% → 키오스크 근접
+    kiosk_face_w_frac: float = 0.13       # 머리 폭 ≥ 화면 가로의 13% → 키오스크 사용 중
+                                          # 디버그 화면의 "face 0.xx" 표시를 보며 매장별로 튜닝
     kiosk_zone: Zone = field(default_factory=lambda: Zone("kiosk", 900, 100, 1280, 600))  # zone 모드에서만 사용
     table_zone: Zone = field(default_factory=lambda: Zone("table", 0, 300, 700, 720))
     table_dwell_trigger_sec: float = 180.0    # 테이블 구역 3분 정체 → 정밀 분석
@@ -68,8 +70,9 @@ class PipelineConfig:
     mp_input_size: Tuple[int, int] = (256, 256)   # 크롭 리사이즈 크기
     mp_pose_complexity: int = 0                    # 0 = lite (엣지 최적화)
     mp_face_enabled: bool = True
-    face_min_crop_h: int = 160            # 크롭 세로 px가 이보다 작으면(원거리) 얼굴 분석 생략
+    face_min_crop_frac: float = 0.35      # 크롭 세로/화면 세로 비율이 이보다 작으면(원거리) 얼굴 분석 생략
                                           # → 거리별 모델 전환: 원거리는 스켈레톤만, 근거리에서만 얼굴
+                                          # (px 길이가 아닌 비율 기준 — 해상도가 바뀌어도 동일하게 동작)
 
     # ── 4단계: 상태 머신 ────────────────────────────────────
     announce_dwell_sec: float = 300.0     # 테이블 300초 + 미구매 → 안내방송
