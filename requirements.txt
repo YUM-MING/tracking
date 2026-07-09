@@ -1,5 +1,5 @@
 ultralytics>=8.3.0
-mediapipe>=0.10.14
+mediapipe>=0.10.14,<0.10.31  # 0.10.31부터 mp.solutions(레거시 API) 삭제됨
 opencv-python>=4.9.0
 numpy>=1.26
 psutil>=5.9            # 리소스 모니터링 / CPU 친화도
