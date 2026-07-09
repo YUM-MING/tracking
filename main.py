@@ -30,6 +30,7 @@ import cv2  # noqa: E402
 
 from event_sender import WebSocketSender                 # noqa: E402
 from reid_tagger import AppearanceTagger                 # noqa: E402
+from stage_profiler import StageProfiler                 # noqa: E402
 from stage1_global_detector import GlobalDetector        # noqa: E402
 from stage2_roi_router import DynamicROIRouter           # noqa: E402
 from stage3_local_analyzer import LocalPrecisionAnalyzer # noqa: E402
@@ -101,6 +102,7 @@ def main():
     frame_idx = 0
     infer_t0, infer_n, infer_fps = time.monotonic(), 0, 0.0
     people, targets = [], []                # 스킵 프레임에서는 직전 결과 재사용
+    prof = StageProfiler(report_interval_sec=10.0)
 
     try:
         while True:
@@ -113,20 +115,30 @@ def main():
             # ── 프레임 샘플링: N프레임마다 1회만 추론 (CPU 예산 보호) ──
             if frame_idx % CFG.detect_every_n == 0:
                 # 1단계: 전역 탐지 + 추적
+                t0 = time.perf_counter()
                 people = detector.detect(frame)
+                t1 = time.perf_counter()
+                prof.add("yolo+track", t1 - t0, items=len(people))
 
                 # 1.5단계: 옷 색상·채도 + 신체 비율 시그니처로 안정 ID 부여
                 if tagger is not None:
                     tagger.assign(frame, people)
+                t2 = time.perf_counter()
+                prof.add("reid", t2 - t1)
 
                 # 2단계: 트리거 대상 선별 + zero-copy 크롭
                 targets = router.route(frame, people)
+                t3 = time.perf_counter()
+                prof.add("roi", t3 - t2)
 
                 # 3단계: 선별된 크롭만 MediaPipe 정밀 분석
                 precision = [analyzer.analyze(t) for t in targets]
+                t4 = time.perf_counter()
+                prof.add("mediapipe", t4 - t3, items=len(targets))
 
                 # 4단계: 결정론적 상태 머신 → 이벤트 큐
                 fsm.update(people, precision, router.table_dwell_seconds)
+                prof.maybe_report()
 
                 infer_n += 1
                 elapsed = time.monotonic() - infer_t0
