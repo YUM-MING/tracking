@@ -1,6 +1,6 @@
 ultralytics>=8.3.0
 mediapipe>=0.10.14,<0.10.31  # 0.10.31부터 mp.solutions(레거시 API) 삭제됨
-opencv-python>=4.9.0
-numpy>=1.26
-psutil>=5.9            # 리소스 모니터링 / CPU 친화도
-websocket-client>=1.7  # 서버 이벤트 전송 (ws_url 사용 시)
+numpy<2                      # 레거시 mediapipe가 numpy 2를 지원하지 않음
+opencv-python>=4.9,<4.12     # 5.x는 numpy 2 필요 → numpy<2와 충돌
+psutil>=5.9                  # 리소스 모니터링 / CPU 친화도
+websocket-client>=1.7        # 서버 이벤트 전송 (ws_url 사용 시)
