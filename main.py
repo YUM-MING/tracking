@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import queue
 import sys
+import threading
 import time
 
 from config import CFG
@@ -43,9 +44,23 @@ REASON_COLOR = {
 }
 
 
+def _stdin_watcher(stop_flag: threading.Event):
+    """터미널에서 q<Enter> 입력으로 종료 (영상 창 포커스 없이도 동작)."""
+    try:
+        for line in sys.stdin:
+            if line.strip().lower() in ("q", "quit", "exit"):
+                stop_flag.set()
+                return
+    except Exception:
+        pass  # stdin이 없는 환경(서비스 구동 등)에서는 조용히 비활성
+
+
 def draw_debug(frame, people, targets, router, infer_fps):
     """디버그 오버레이 (구역, BBox, 트리거 상태, 추론 FPS)."""
-    for z, color in ((CFG.kiosk_zone, (0, 200, 255)), (CFG.table_zone, (255, 150, 0))):
+    zones = [(CFG.table_zone, (255, 150, 0))]
+    if CFG.kiosk_trigger_mode == "zone":   # near 모드에선 키오스크 구역 개념이 없음
+        zones.append((CFG.kiosk_zone, (0, 200, 255)))
+    for z, color in zones:
         cv2.rectangle(frame, (z.x1, z.y1), (z.x2, z.y2), color, 1)
         cv2.putText(frame, z.name, (z.x1 + 4, z.y1 + 18),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
@@ -98,14 +113,18 @@ def main():
         log.error("카메라를 열 수 없습니다: %s", source)
         return
 
-    log.info("파이프라인 시작 (종료: q, 프레임 스킵: %d)", CFG.detect_every_n)
+    log.info("파이프라인 시작 (종료: 영상 창에서 q, 또는 터미널에서 q+Enter / Ctrl+C)")
     frame_idx = 0
     infer_t0, infer_n, infer_fps = time.monotonic(), 0, 0.0
     people, targets = [], []                # 스킵 프레임에서는 직전 결과 재사용
     prof = StageProfiler(report_interval_sec=10.0)
 
+    stop_flag = threading.Event()
+    threading.Thread(target=_stdin_watcher, args=(stop_flag,),
+                     name="stdin-watcher", daemon=True).start()
+
     try:
-        while True:
+        while not stop_flag.is_set():
             ok, frame = cap.read()
             if not ok:
                 log.warning("프레임 수신 실패 — 종료")
@@ -146,12 +165,14 @@ def main():
                     infer_fps = infer_n / elapsed
                     infer_t0, infer_n = time.monotonic(), 0
 
-            # ── 디버그 시각화 (매 프레임, 직전 추론 결과 오버레이) ──
-            if CFG.show_window:
+            # ── 디버그 시각화 (표시 자체도 CPU 비용 — 주기 조절 가능) ──
+            if CFG.show_window and frame_idx % CFG.display_every_n == 0:
                 vis = draw_debug(frame, people, targets, router, infer_fps)
                 cv2.imshow("Hybrid Cascade Pipeline", vis)
                 if cv2.waitKey(1) & 0xFF == ord("q"):
                     break
+    except KeyboardInterrupt:
+        log.info("Ctrl+C 수신 — 정리 후 종료")
     finally:
         cap.release()
         cv2.destroyAllWindows()

@@ -52,7 +52,12 @@ class PipelineConfig:
     reid_gallery_ttl_sec: float = 60.0    # 사라진 트랙 시그니처 보관 시간
 
     # ── 2단계: 동적 ROI 트리거 조건 ────────────────────────
-    kiosk_zone: Zone = field(default_factory=lambda: Zone("kiosk", 900, 100, 1280, 600))
+    # 키오스크 판정: 카메라가 키오스크 본체에 달리는 배치에서는 "구역"이 아니라
+    # "근접(BBox 크기)"이 맞는 기준이다. 사용자가 다가오면 화면 대부분을 가리므로
+    # BBox 세로가 화면 세로의 일정 비율 이상이면 키오스크 사용 중으로 본다.
+    kiosk_trigger_mode: str = "near"      # "near": 근접(키오스크 부착 카메라) | "zone": 화면 구역(천장/벽 카메라)
+    kiosk_near_h_frac: float = 0.5        # BBox 세로 ≥ 화면 세로의 50% → 키오스크 근접
+    kiosk_zone: Zone = field(default_factory=lambda: Zone("kiosk", 900, 100, 1280, 600))  # zone 모드에서만 사용
     table_zone: Zone = field(default_factory=lambda: Zone("table", 0, 300, 700, 720))
     table_dwell_trigger_sec: float = 180.0    # 테이블 구역 3분 정체 → 정밀 분석
     fall_aspect_ratio: float = 1.4            # BBox 가로/세로 비율 (쓰러짐 징후)
@@ -78,7 +83,8 @@ class PipelineConfig:
     ws_reconnect_max_sec: float = 30.0    # 재연결 백오프 상한
 
     # ── 기타 ────────────────────────────────────────────────
-    show_window: bool = True              # 디버그 시각화 창
+    show_window: bool = True              # 디버그 시각화 창 (운영 배포 시 False — 표시 비용도 큼)
+    display_every_n: int = 2              # 화면 갱신 주기 (1=매 프레임). imshow 자체가 CPU를 상당히 먹는다
     log_level: str = "INFO"
 
 

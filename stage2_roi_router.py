@@ -67,9 +67,15 @@ class DynamicROIRouter:
                 return True
         return False
 
+    def is_kiosk_near(self, p: TrackedPerson, frame_h: int) -> bool:
+        """BBox 세로가 화면 세로의 일정 비율 이상 = 키오스크 근접(사용 중)."""
+        bbox_h = float(p.bbox[3] - p.bbox[1])
+        return bbox_h / max(frame_h, 1) >= self.cfg.kiosk_near_h_frac
+
     # ── 메인 라우팅 ────────────────────────────────────────
     def route(self, frame: np.ndarray, people: List[TrackedPerson]) -> List[PrecisionTarget]:
         now = time.monotonic()
+        frame_h = frame.shape[0]
         targets: List[PrecisionTarget] = []
 
         for p in people:
@@ -77,20 +83,28 @@ class DynamicROIRouter:
             cx, cy = p.center
             reason: Optional[str] = None
 
+            # 키오스크 판정: near 모드(부착 카메라)는 BBox 크기, zone 모드는 화면 구역
+            if self.cfg.kiosk_trigger_mode == "near":
+                at_kiosk = self.is_kiosk_near(p, frame_h)
+            else:
+                at_kiosk = self.cfg.kiosk_zone.contains(cx, cy)
+
             # 테이블 체류 타이머는 트리거 우선순위와 무관하게 구역 기준으로만 관리
             # (키오스크로 이동해도 타이머가 남는 오탐 방지)
-            in_table = self.cfg.table_zone.contains(cx, cy)
+            in_table = self.cfg.table_zone.contains(cx, cy) and not at_kiosk
             if in_table:
                 enter = self._table_enter_ts.setdefault(p.track_id, now)
             else:
                 self._table_enter_ts.pop(p.track_id, None)
 
             # 조건 3: 쓰러짐 징후 (최우선)
-            if self._check_fall(p):
+            # 단, 근접 상태는 제외 — 카메라 앞에 가까이 오면 상반신만 잡혀
+            # BBox가 가로로 넓어지고 종횡비 기준이 서있어도 '쓰러짐'으로 오탐한다.
+            if not at_kiosk and self._check_fall(p):
                 reason = "fall_suspect"
 
-            # 조건 1: 키오스크 구역 진입
-            elif self.cfg.kiosk_zone.contains(cx, cy):
+            # 조건 1: 키오스크 근접/진입
+            elif at_kiosk:
                 reason = "kiosk_enter"
 
             # 조건 2: 테이블 구역 정체
