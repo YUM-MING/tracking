@@ -53,9 +53,26 @@ cmake --build build --config Release
 build\Release\kiosk_tracking.exe                # 기본 웹캠
 build\Release\kiosk_tracking.exe rtsp://...     # IP 카메라
 build\Release\kiosk_tracking.exe video.mp4      # 파일 (오프라인 테스트)
+build\Release\kiosk_tracking.exe --no-window    # 헤드리스 (운영 배포)
+build\Release\kiosk_tracking.exe --ws=ws://192.168.0.10:8080/events   # 서버 전송
 ```
 
 종료: 영상 창 또는 터미널에서 `q`.
+모델(`yolo11n-pose.onnx`)은 실행 파일과 같은 폴더에서 찾는다 (빌드 시 자동 복사).
+
+## 테스트 도구
+
+| 도구 | 용도 |
+|---|---|
+| `test_logic.exe` | 라우터/상태머신/재식별 순수 로직 단위 테스트 (모델 불필요, 22 케이스) |
+| `test_detect.exe <이미지\|영상> [imgsz] [conf]` | 검출 결과 출력 — 파이썬 ultralytics와 파리티 비교용 |
+| `test_ws.exe ws://...` | 웹소켓 클라이언트 실통신 검증 (이벤트 3건 전송) |
+
+검증 이력 (2026-07-12):
+- bus.jpg 기준 C 검출 결과가 ultralytics(동일 ONNX)와 박스 ~2px, conf ~0.03 이내 일치
+- test_logic 22/22 통과
+- 파이썬 websockets 서버로 JSON 스키마·UTF-8·이스케이프 수신 확인
+- 30초 mp4 파이프라인 완주: RSS 144MB, proc CPU ~200%(=스레드 상한 2개 준수)
 
 ## 구조 원칙
 - **순수 C 핫패스**: 추론 전후처리, 추적, 재식별, 라우팅, 상태머신, 소켓 전송
