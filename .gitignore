@@ -2,3 +2,8 @@ __pycache__/
 *.pyc
 .bkit/
 *.pt
+*.onnx
+
+# C 포팅 빌드 산출물/의존성 (c/README.md 참고)
+c/build/
+c/third_party/
