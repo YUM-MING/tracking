@@ -4,19 +4,25 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
+#include <pthread.h>
 
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#include <winsock2.h>
-#include <ws2tcpip.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <netinet/in.h>
+#include <netdb.h>
+#include <unistd.h>
 
-#pragma comment(lib, "ws2_32.lib")
+#include "resource.h"
+
+typedef int SOCKET;
+#define INVALID_SOCKET (-1)
 
 #define MAX_BACKLOG 500        /* 서버 장기 다운 시 오래된 이벤트부터 폐기 */
 
 /* ── 내부 큐 (fsm.c의 이벤트 큐와 동일 패턴, JSON 문자열 보관) ── */
 typedef struct {
-    char json[512];
+    char json[1024];           /* 동선(journey) 메타 포함으로 확장 */
 } WsPayload;
 
 struct WsSender {
@@ -26,10 +32,11 @@ struct WsSender {
     WsPayload buf[MAX_BACKLOG];
     int head, tail, count;
     bool closed;
-    CRITICAL_SECTION lock;
-    CONDITION_VARIABLE not_empty;
+    pthread_mutex_t lock;
+    pthread_cond_t not_empty;
 
-    HANDLE thread;
+    pthread_t thread;
+    bool has_thread;
     SOCKET sock;
     double backoff;
 };
@@ -155,7 +162,7 @@ static bool ws_send_text(SOCKET s, const char *text)
 static void ws_close_sock(WsSender *s)
 {
     if (s->sock != INVALID_SOCKET) {
-        closesocket(s->sock);
+        close(s->sock);
         s->sock = INVALID_SOCKET;
     }
 }
@@ -167,7 +174,7 @@ static bool ws_connect(WsSender *s)
     if (!parse_ws_url(s->cfg->ws_url, host, sizeof(host),
                       port, sizeof(port), path, sizeof(path))) {
         fprintf(stderr, "[ws] URL 파싱 실패: %s\n", s->cfg->ws_url);
-        Sleep(5000);
+        usleep(5000 * 1000);
         return false;
     }
 
@@ -178,15 +185,15 @@ static bool ws_connect(WsSender *s)
     if (getaddrinfo(host, port, &hints, &ai) == 0) {
         SOCKET sock = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
         if (sock != INVALID_SOCKET) {
-            DWORD tmo = 5000;
-            setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (char *)&tmo, sizeof(tmo));
-            setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (char *)&tmo, sizeof(tmo));
-            if (connect(sock, ai->ai_addr, (int)ai->ai_addrlen) == 0 &&
+            struct timeval tmo = { .tv_sec = 5, .tv_usec = 0 };
+            setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tmo, sizeof(tmo));
+            setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tmo, sizeof(tmo));
+            if (connect(sock, ai->ai_addr, ai->ai_addrlen) == 0 &&
                 ws_handshake(sock, host, port, path)) {
                 s->sock = sock;
                 ok = true;
             } else {
-                closesocket(sock);
+                close(sock);
             }
         }
         freeaddrinfo(ai);
@@ -197,7 +204,7 @@ static bool ws_connect(WsSender *s)
         fprintf(stderr, "[ws] 웹소켓 연결됨: %s\n", s->cfg->ws_url);
     } else {
         fprintf(stderr, "[ws] 연결 실패 — %.1f초 후 재시도\n", s->backoff);
-        Sleep((DWORD)(s->backoff * 1000));
+        usleep((useconds_t)(s->backoff * 1000 * 1000));
         s->backoff *= 2;
         if (s->backoff > s->cfg->ws_reconnect_max_sec)
             s->backoff = s->cfg->ws_reconnect_max_sec;
@@ -205,18 +212,33 @@ static bool ws_connect(WsSender *s)
     return ok;
 }
 
+static void deadline_ms_from_now(struct timespec *ts, int timeout_ms)
+{
+    clock_gettime(CLOCK_REALTIME, ts);
+    ts->tv_sec += timeout_ms / 1000;
+    ts->tv_nsec += (long)(timeout_ms % 1000) * 1000000L;
+    if (ts->tv_nsec >= 1000000000L) {
+        ts->tv_nsec -= 1000000000L;
+        ts->tv_sec += 1;
+    }
+}
+
 /* ── 워커 스레드: 큐 소비 → (재)연결 → 전송 ── */
-static DWORD WINAPI ws_thread_main(LPVOID arg)
+static void *ws_thread_main(void *arg)
 {
     WsSender *s = arg;
+    apply_thread_role(THREAD_ROLE_IO);   /* 통신은 효율 코어로 (8/9 스레드 분배) */
 
     for (;;) {
         /* 페이로드 대기 */
         WsPayload payload;
         bool got = false;
-        EnterCriticalSection(&s->lock);
-        while (s->count == 0 && !s->closed)
-            SleepConditionVariableCS(&s->not_empty, &s->lock, 500);
+        pthread_mutex_lock(&s->lock);
+        while (s->count == 0 && !s->closed) {
+            struct timespec deadline;
+            deadline_ms_from_now(&deadline, 500);
+            pthread_cond_timedwait(&s->not_empty, &s->lock, &deadline);
+        }
         if (s->count > 0) {
             payload = s->buf[s->head];
             s->head = (s->head + 1) % MAX_BACKLOG;
@@ -224,7 +246,7 @@ static DWORD WINAPI ws_thread_main(LPVOID arg)
             got = true;
         }
         bool closed = s->closed;
-        LeaveCriticalSection(&s->lock);
+        pthread_mutex_unlock(&s->lock);
         if (!got) {
             if (closed) break;
             continue;
@@ -232,9 +254,9 @@ static DWORD WINAPI ws_thread_main(LPVOID arg)
 
         /* 전송 (실패 시 재연결 후 재시도) */
         for (;;) {
-            EnterCriticalSection(&s->lock);
+            pthread_mutex_lock(&s->lock);
             closed = s->closed;
-            LeaveCriticalSection(&s->lock);
+            pthread_mutex_unlock(&s->lock);
             if (closed) break;
 
             if (s->sock == INVALID_SOCKET && !ws_connect(s)) continue;
@@ -246,7 +268,7 @@ static DWORD WINAPI ws_thread_main(LPVOID arg)
     }
 
     ws_close_sock(s);
-    return 0;
+    return NULL;
 }
 
 /* ── 공개 API ── */
@@ -257,8 +279,8 @@ WsSender *ws_create(const PipelineConfig *cfg)
     s->sock = INVALID_SOCKET;
     s->backoff = cfg->ws_reconnect_min_sec;
     s->enabled = cfg->ws_url && cfg->ws_url[0];
-    InitializeCriticalSection(&s->lock);
-    InitializeConditionVariable(&s->not_empty);
+    pthread_mutex_init(&s->lock, NULL);
+    pthread_cond_init(&s->not_empty, NULL);
     return s;
 }
 
@@ -268,14 +290,9 @@ void ws_start(WsSender *s)
         fprintf(stderr, "[ws] ws_url 미설정 — 서버 전송 비활성 (로컬 로그만)\n");
         return;
     }
-    WSADATA wsa;
-    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
-        fprintf(stderr, "[ws] WSAStartup 실패 — 서버 전송 비활성\n");
-        s->enabled = false;
-        return;
-    }
-    srand((unsigned)time(NULL) ^ GetCurrentProcessId());
-    s->thread = CreateThread(NULL, 0, ws_thread_main, s, 0, NULL);
+    srand((unsigned)time(NULL) ^ (unsigned)getpid());
+    if (pthread_create(&s->thread, NULL, ws_thread_main, s) == 0)
+        s->has_thread = true;
 }
 
 /*
@@ -303,16 +320,17 @@ void ws_send_event(WsSender *s, const Event *ev)
 {
     if (!s->enabled) return;
 
-    char esc[384];
+    char esc[384], esc_journey[448];
     json_escape(ev->message, esc, sizeof(esc));
+    json_escape(ev->journey, esc_journey, sizeof(esc_journey));
     WsPayload payload;
     snprintf(payload.json, sizeof(payload.json),
              "{\"type\":\"%s\",\"track_id\":%d,\"ts\":%.3f,"
-             "\"message\":\"%s\",\"meta\":{}}",
+             "\"message\":\"%s\",\"meta\":{\"journey\":\"%s\"}}",
              event_kind_str(ev->kind), ev->track_id,
-             (double)time(NULL), esc);
+             (double)time(NULL), esc, esc_journey);
 
-    EnterCriticalSection(&s->lock);
+    pthread_mutex_lock(&s->lock);
     if (s->count >= MAX_BACKLOG) {           /* 백로그 초과 — 오래된 것 폐기 */
         s->head = (s->head + 1) % MAX_BACKLOG;
         s->count--;
@@ -321,27 +339,26 @@ void ws_send_event(WsSender *s, const Event *ev)
     s->buf[s->tail] = payload;
     s->tail = (s->tail + 1) % MAX_BACKLOG;
     s->count++;
-    LeaveCriticalSection(&s->lock);
-    WakeConditionVariable(&s->not_empty);
+    pthread_mutex_unlock(&s->lock);
+    pthread_cond_signal(&s->not_empty);
 }
 
 void ws_stop(WsSender *s)
 {
-    EnterCriticalSection(&s->lock);
+    pthread_mutex_lock(&s->lock);
     s->closed = true;
-    LeaveCriticalSection(&s->lock);
-    WakeAllConditionVariable(&s->not_empty);
-    if (s->thread) {
-        WaitForSingleObject(s->thread, 3000);
-        CloseHandle(s->thread);
-        s->thread = NULL;
+    pthread_mutex_unlock(&s->lock);
+    pthread_cond_broadcast(&s->not_empty);
+    if (s->has_thread) {
+        pthread_join(s->thread, NULL);
+        s->has_thread = false;
     }
-    if (s->enabled) WSACleanup();
 }
 
 void ws_destroy(WsSender *s)
 {
     if (!s) return;
-    DeleteCriticalSection(&s->lock);
+    pthread_mutex_destroy(&s->lock);
+    pthread_cond_destroy(&s->not_empty);
     free(s);
 }

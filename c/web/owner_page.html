@@ -1,0 +1,752 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>무인매장 AI 점주 설정</title>
+<style>
+  :root {
+    --bg: #12151a; --panel: #1b2028; --panel2: #222834; --line: #303845;
+    --text: #e6ebf2; --dim: #8b95a5; --accent: #4da3ff; --ok: #3ecf8e;
+    --warn: #ffb84d; --danger: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.6 -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; }
+  header { padding: 18px 24px; border-bottom: 1px solid var(--line);
+           display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  header h1 { font-size: 18px; margin: 0; }
+  header .sub { color: var(--dim); font-size: 12px; }
+  main { max-width: 1100px; margin: 0 auto; padding: 20px 24px 60px;
+         display: grid; gap: 18px; }
+  section { background: var(--panel); border: 1px solid var(--line);
+            border-radius: 10px; padding: 16px 18px; }
+  h2 { font-size: 14px; margin: 0 0 12px; color: var(--accent); }
+  h2 .hint { color: var(--dim); font-weight: normal; font-size: 12px; margin-left: 8px; }
+
+  /* 상태 카드 */
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px,1fr)); gap: 10px; }
+  .stat { background: var(--panel2); border-radius: 8px; padding: 10px 12px; }
+  .stat .k { color: var(--dim); font-size: 11px; }
+  .stat .v { font-size: 20px; font-weight: 600; }
+  .stat .v.ok { color: var(--ok); } .stat .v.warn { color: var(--warn); }
+  .stat .v.danger { color: var(--danger); }
+
+  /* 룰 체크박스 */
+  .rules { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px,1fr)); gap: 8px; }
+  .rule { display: flex; gap: 10px; align-items: flex-start; background: var(--panel2);
+          border-radius: 8px; padding: 10px 12px; }
+  .rule input { margin-top: 4px; accent-color: var(--accent); width: 16px; height: 16px; }
+  .rule .name { font-weight: 600; }
+  .rule .desc { color: var(--dim); font-size: 12px; }
+  .rule.soon { opacity: .45; }
+  .rule.soon .badge { display: inline-block; font-size: 10px; color: var(--warn);
+                      border: 1px solid var(--warn); border-radius: 4px;
+                      padding: 0 5px; margin-left: 6px; }
+
+  /* 슬라이더 */
+  .sliders { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px,1fr)); gap: 14px; }
+  .slider label { display: flex; justify-content: space-between; font-size: 13px; }
+  .slider label b { color: var(--accent); font-variant-numeric: tabular-nums; }
+  .slider input[type=range] { width: 100%; accent-color: var(--accent); }
+  .slider .range-hint { color: var(--dim); font-size: 11px; }
+
+  /* 구역 캔버스 */
+  .zone-wrap { display: flex; gap: 16px; flex-wrap: wrap; }
+  canvas { background: #0b0e12; border: 1px solid var(--line); border-radius: 8px;
+           width: 640px; max-width: 100%; cursor: crosshair; touch-action: none; }
+  .zone-side { min-width: 220px; flex: 1; display: grid; gap: 8px; align-content: start; }
+  .zone-side .pick { display: flex; gap: 8px; }
+  .zone-side .pick button { flex: 1; }
+  button { background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+           border-radius: 7px; padding: 7px 14px; cursor: pointer; font: inherit; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: #0b0e12; font-weight: 700;
+                   border-color: var(--accent); }
+  button.active { outline: 2px solid var(--accent); }
+  select, input[type=number], input[type=text] {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 7px; padding: 6px 8px; font: inherit; }
+
+  /* 이벤트 */
+  .events { display: grid; gap: 8px; max-height: 420px; overflow-y: auto; }
+  .ev { background: var(--panel2); border-left: 3px solid var(--dim);
+        border-radius: 6px; padding: 8px 12px; }
+  .ev.fall_alert { border-color: var(--danger); }
+  .ev.announce_dwell { border-color: var(--warn); }
+  .ev.kiosk_assist { border-color: var(--accent); }
+  .ev.no_kiosk_sit { border-color: var(--warn); }
+  .ev.hw_fault { border-color: var(--danger); }
+  .ev.overstay { border-color: var(--warn); }
+  .ev.pet, .ev.outside_food, .ev.kiosk_reco { border-color: var(--accent); }
+  .ev.minor_suspect, .ev.supply_abuse, .ev.group_mismatch,
+  .ev.loitering, .ev.tampering, .ev.clean_needed { border-color: var(--warn); }
+  .ev.violence, .ev.vandalism { border-color: var(--danger); }
+  .ev .head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  .ev .type { font-size: 11px; color: var(--dim); }
+  .ev .journey { color: var(--dim); font-size: 12px; margin-top: 2px; }
+  .ev button { padding: 2px 10px; font-size: 12px; margin-left: auto; }
+  .empty { color: var(--dim); }
+
+  pre#logs { background: #0b0e12; border-radius: 8px; padding: 10px;
+             max-height: 260px; overflow: auto; font-size: 12px; margin: 0; }
+  .savebar { position: sticky; bottom: 14px; display: flex; gap: 10px;
+             justify-content: flex-end; align-items: center; }
+  #save-note { color: var(--ok); font-size: 12px; opacity: 0; transition: opacity .3s; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🏪 무인매장 AI 점주 설정</h1>
+  <span class="sub">룰은 시스템이 강제하지 않습니다 — 매장 정책에 맞춰 직접 켜고 끄세요.</span>
+  <span class="sub" id="conn" style="margin-left:auto">연결 중…</span>
+</header>
+<main>
+
+<section>
+  <h2>매장 상태<span class="hint">5초마다 자동 갱신</span></h2>
+  <div class="stats">
+    <div class="stat"><div class="k">현재 매장 인원</div><div class="v" id="st-people">–</div></div>
+    <div class="stat"><div class="k">추론 FPS</div><div class="v" id="st-fps">–</div></div>
+    <div class="stat"><div class="k">시스템 CPU</div><div class="v" id="st-cpu">–</div></div>
+    <div class="stat"><div class="k">메모리(RSS)</div><div class="v" id="st-rss">–</div></div>
+    <div class="stat"><div class="k">카메라 상태</div><div class="v" id="st-cam">–</div></div>
+    <div class="stat"><div class="k">운영 모드</div><div class="v" id="st-mode">–</div></div>
+    <div class="stat"><div class="k">가동 시간</div><div class="v" id="st-up">–</div></div>
+  </div>
+</section>
+
+<section>
+  <h2>감지 룰 ON / OFF<span class="hint">체크 해제하면 해당 알림이 꺼집니다</span></h2>
+  <div class="rules">
+    <label class="rule"><input type="checkbox" id="rule_fall">
+      <span><span class="name">🚨 쓰러짐 긴급 알림</span><br>
+      <span class="desc">스켈레톤 붕괴 감지 시 즉시 알림 (안전 기능 — 끄지 않기를 권장)</span></span></label>
+    <label class="rule"><input type="checkbox" id="rule_announce">
+      <span><span class="name">📢 장기 체류 미구매 안내방송</span><br>
+      <span class="desc">테이블 체류 기준 초과 + 결제 이력 없음 → 안내방송</span></span></label>
+    <label class="rule"><input type="checkbox" id="rule_no_kiosk_sit">
+      <span><span class="name">🪑 주문 없이 착석 감지</span><br>
+      <span class="desc">입장 후 키오스크를 거치지 않고 바로 앉는 행동 패턴 알림</span></span></label>
+    <label class="rule"><input type="checkbox" id="rule_assist">
+      <span><span class="name">🙋 키오스크 도움 요청</span><br>
+      <span class="desc">키오스크 앞에서 손을 들면 도움 필요로 판단</span></span></label>
+    <label class="rule"><input type="checkbox" id="rule_hw_alert">
+      <span><span class="name">📷 카메라 이상 자가진단</span><br>
+      <span class="desc">백화현상·초점 상실·프레임 정지를 스스로 감지해 알림</span></span></label>
+    <label class="rule"><input type="checkbox" id="rule_overstay">
+      <span><span class="name">⏰ 구매 후 초과 체류</span><br>
+      <span class="desc">결제 1건당 허용 시간(기본 1.5시간) 초과 시 알림 — 재주문 유도/퇴장 안내는 점주가 결정</span></span></label>
+    <label class="rule"><input type="checkbox" id="activity_exempt">
+      <span><span class="name">📚 공부·작업 중 손님 배려</span><br>
+      <span class="desc">몸은 정지해도 손이 꾸준히 움직이면(공부·노트북·조립) 체류 알림에서 제외</span></span></label>
+    <label class="rule"><input type="checkbox" id="eco_mode">
+      <span><span class="name">🌡️ 무인 시 절전 (발열 보호)</span><br>
+      <span class="desc">매장에 사람이 없으면 분석 주기를 4배로 늘려 장비 발열·수명 관리</span></span></label>
+    <label class="rule"><input type="checkbox" id="verbose_log">
+      <span><span class="name">🔍 상세 판단 로그</span><br>
+      <span class="desc">모든 판정의 근거를 로그에 기록 (문제 분석용 — 평소엔 꺼두세요)</span></span></label>
+    <label class="rule"><input type="checkbox" id="rule_pet">
+      <span><span class="name">🐕 반려동물 출입 감지</span><br>
+      <span class="desc">강아지·고양이 감지 시 알림 (테이블/좌석 구역이면 함께 표시) — 확장 모델 사용</span></span></label>
+    <label class="rule"><input type="checkbox" id="rule_no_kids">
+      <span><span class="name">🧒 노키즈존 (나이 추정)</span><br>
+      <span class="desc">키오스크 앞 얼굴로 나이 추정, 여러 번 확인 후에만 알림 (오차 ±5세 — 차단이 아닌 확인 요청)</span></span></label>
+    <label class="rule"><input type="checkbox" id="rule_outside_food">
+      <span><span class="name">🍔 외부 음식 반입</span><br>
+      <span class="desc">테이블 위 피자·샌드위치·케이크류 감지 — 판매 품목과 겹치면 꺼두세요</span></span></label>
+    <label class="rule"><input type="checkbox" id="rule_supply_abuse">
+      <span><span class="name">🥤 비품 어뷰징 (시럽·빨대 등)</span><br>
+      <span class="desc">같은 손님이 비품 구역을 반복 방문하면 알림 — 아래에서 비품 구역을 먼저 그려주세요</span></span></label>
+    <label class="rule"><input type="checkbox" id="rule_group_mismatch">
+      <span><span class="name">👥 일행 수 · 주문 수 불일치</span><br>
+      <span class="desc">테이블 체류 인원보다 결제 잔 수가 적으면 알림 (POS 잔 수 연동 필요)</span></span></label>
+    <label class="rule"><input type="checkbox" id="rule_violence">
+      <span><span class="name">🥊 폭력 의심</span><br>
+      <span class="desc">두 사람이 밀착한 상태의 고속 팔 휘두름 — 관절 이동 벡터 기반 (모델 불필요)</span></span></label>
+    <label class="rule"><input type="checkbox" id="rule_vandalism">
+      <span><span class="name">🔨 기물 파손 의심</span><br>
+      <span class="desc">혼자 제자리에서 고속 팔 휘두름을 반복 (집기 내려치기 등)</span></span></label>
+    <label class="rule"><input type="checkbox" id="rule_loitering">
+      <span><span class="name">🚶 장시간 배회</span><br>
+      <span class="desc">착석도 구매도 없이 매장 안을 오래 돌아다니면 알림</span></span></label>
+    <label class="rule"><input type="checkbox" id="rule_tampering">
+      <span><span class="name">🔧 키오스크 무단 조작</span><br>
+      <span class="desc">키오스크를 비정상적으로 오래 점유하면 알림 (정상 주문 1~3분)</span></span></label>
+    <label class="rule"><input type="checkbox" id="rule_clean">
+      <span><span class="name">🧹 스마트 청소 알림</span><br>
+      <span class="desc">손님이 테이블을 떠난 직후 컵·병·음식 잔여물이 남아 있으면 정리 알림</span></span></label>
+    <label class="rule"><input type="checkbox" id="rule_reco">
+      <span><span class="name">💡 키오스크 동적 추천</span><br>
+      <span class="desc">키오스크 접근 시 동행 수·시간대 컨텍스트를 발행 — 키오스크 SW가 추천 팝업 표출</span></span></label>
+  </div>
+</section>
+
+<section>
+  <h2>민감도 조정<span class="hint">매장 환경에 맞게 영점을 맞추세요 (캘리브레이션)</span></h2>
+  <div class="sliders">
+    <div class="slider">
+      <label>테이블 정체 감시 시작 <b id="v-dwell">–</b></label>
+      <input type="range" id="table_dwell_trigger_sec" min="10" max="1800" step="10">
+      <div class="range-hint">이 시간 이상 테이블에 머물면 정밀 분석 대상</div>
+    </div>
+    <div class="slider">
+      <label>미구매 안내방송 기준 <b id="v-announce">–</b></label>
+      <input type="range" id="announce_dwell_sec" min="60" max="21600" step="60">
+      <div class="range-hint">체류가 이 시간을 넘고 결제가 없으면 안내방송</div>
+    </div>
+    <div class="slider">
+      <label>안내방송 쿨다운 <b id="v-cooldown">–</b></label>
+      <input type="range" id="announce_cooldown_sec" min="30" max="1800" step="30">
+      <div class="range-hint">같은 손님에게 다시 방송하기까지의 간격</div>
+    </div>
+    <div class="slider">
+      <label>주문 없이 착석 유예 <b id="v-grace">–</b></label>
+      <input type="range" id="no_kiosk_sit_grace_sec" min="5" max="600" step="5">
+      <div class="range-hint">착석 후 이 시간까지는 알림을 보내지 않음</div>
+    </div>
+    <div class="slider">
+      <label>쓰러짐 민감도 (종횡비) <b id="v-fall">–</b></label>
+      <input type="range" id="fall_aspect_ratio" min="1.0" max="3.0" step="0.05">
+      <div class="range-hint">값이 클수록 둔감 (오탐이 잦으면 올리세요)</div>
+    </div>
+    <div class="slider">
+      <label>키오스크 근접 기준 (얼굴 비율) <b id="v-face">–</b></label>
+      <input type="range" id="kiosk_face_w_frac" min="0.03" max="0.5" step="0.005">
+      <div class="range-hint">얼굴이 화면 가로의 이 비율 이상이면 키오스크 사용 중</div>
+    </div>
+    <div class="slider">
+      <label>감지 민감도 (검출 신뢰도) <b id="v-conf">–</b></label>
+      <input type="range" id="yolo_conf" min="0.10" max="0.90" step="0.05">
+      <div class="range-hint">낮을수록 민감 (유령 인식이 잦으면 올리세요)</div>
+    </div>
+    <div class="slider">
+      <label>분석 주기 (N프레임당 1회) <b id="v-every">–</b></label>
+      <input type="range" id="detect_every_n" min="1" max="30" step="1">
+      <div class="range-hint">클수록 CPU·발열 감소, 반응 속도 저하 (기본 5)</div>
+    </div>
+    <div class="slider">
+      <label>쓰러짐 확정 연속 횟수 <b id="v-fallframes">–</b></label>
+      <input type="range" id="fall_confirm_frames" min="2" max="30" step="1">
+      <div class="range-hint">연속 N회 감지돼야 확정 — 클수록 신중 (기본 5)</div>
+    </div>
+    <div class="slider">
+      <label>결제 1건당 허용 체류 <b id="v-stay">–</b></label>
+      <input type="range" id="stay_per_purchase_sec" min="600" max="21600" step="600">
+      <div class="range-hint">2잔 결제 시 2배로 자동 연장 (초과 체류 룰용)</div>
+    </div>
+    <div class="slider">
+      <label>작업 판정 민감도 (손 움직임) <b id="v-act">–</b></label>
+      <input type="range" id="activity_min_move" min="0.005" max="0.10" step="0.005">
+      <div class="range-hint">낮을수록 작은 손 움직임도 '작업 중'으로 인정</div>
+    </div>
+    <div class="slider">
+      <label>절전 진입 대기 (무인 판정) <b id="v-eco">–</b></label>
+      <input type="range" id="eco_idle_sec" min="30" max="3600" step="30">
+      <div class="range-hint">이 시간 동안 사람이 없으면 절전 모드 진입</div>
+    </div>
+    <div class="slider">
+      <label>확장 감지 민감도 (동물/음식) <b id="v-objconf">–</b></label>
+      <input type="range" id="obj_conf" min="0.20" max="0.90" step="0.05">
+      <div class="range-hint">반려동물/음식 오탐이 잦으면 올리세요</div>
+    </div>
+    <div class="slider">
+      <label>확장 감지 주기 <b id="v-objk">–</b></label>
+      <input type="range" id="obj_every_k" min="1" max="30" step="1">
+      <div class="range-hint">사람 분석 K회당 1회 — 클수록 CPU·발열 감소</div>
+    </div>
+    <div class="slider">
+      <label>미성년 의심 기준 나이 <b id="v-kids">–</b></label>
+      <input type="range" id="kids_age_limit" min="5" max="19" step="1">
+      <div class="range-hint">추정 나이가 이 이하로 반복되면 노키즈존 알림</div>
+    </div>
+    <div class="slider">
+      <label>비품 어뷰징 방문 기준 <b id="v-supply">–</b></label>
+      <input type="range" id="supply_abuse_visits" min="2" max="20" step="1">
+      <div class="range-hint">같은 손님이 비품 구역을 N회 이상 방문하면 알림</div>
+    </div>
+    <div class="slider">
+      <label>이상행동 민감도 (폭력·파손·낙상) <b id="v-sense">–</b></label>
+      <input type="range" id="behavior_sense" min="0.5" max="2.0" step="0.1">
+      <div class="range-hint">1.0 기준 — 올리면 민감, 오탐이 잦으면 내리세요</div>
+    </div>
+    <div class="slider">
+      <label>배회 판정 시간 <b id="v-loiter">–</b></label>
+      <input type="range" id="loiter_sec" min="60" max="7200" step="60">
+      <div class="range-hint">착석·구매 없이 이 시간 이상 돌아다니면 배회</div>
+    </div>
+    <div class="slider">
+      <label>키오스크 무단 점유 기준 <b id="v-tamper">–</b></label>
+      <input type="range" id="tamper_sec" min="60" max="3600" step="60">
+      <div class="range-hint">이 시간 이상 연속 점유하면 무단 조작 의심</div>
+    </div>
+    <div class="slider">
+      <label>목표 오탐율 <b id="v-fptarget">–</b></label>
+      <input type="range" id="fp_target_pct" min="1" max="50" step="1">
+      <div class="range-hint">룰별 오탐율이 이 값을 넘으면 기준을 자동 보수화 (기본 5%)</div>
+    </div>
+  </div>
+  <div class="row" style="margin-top:12px">
+    <span>키오스크 판정 방식</span>
+    <select id="kiosk_trigger_mode">
+      <option value="0">근접 (키오스크 부착 카메라)</option>
+      <option value="1">화면 구역 (천장/벽 카메라)</option>
+    </select>
+    <span style="margin-left:16px">
+      <label><input type="checkbox" id="hours_enabled" style="accent-color:var(--accent)">
+      영업시간 외 저전력</label>
+    </span>
+    <input type="time" id="open_time" value="09:00">
+    <span>~</span>
+    <input type="time" id="close_time" value="22:00">
+    <span class="desc" style="color:var(--dim);font-size:12px">
+      시간 밖에는 카메라를 2초에 1프레임만 받아 발열을 최소화합니다 (자가진단은 유지)
+    </span>
+  </div>
+</section>
+
+<section>
+  <h2>구역(Zone) · 인식 범위 설정<span class="hint">버튼을 누른 뒤 화면 위에 드래그하세요</span></h2>
+  <div class="zone-wrap">
+    <canvas id="zone-canvas" width="640" height="360"></canvas>
+    <div class="zone-side">
+      <div class="pick">
+        <button id="pick-table">🟦 테이블 구역</button>
+        <button id="pick-kiosk">🟨 키오스크 구역</button>
+        <button id="pick-supply">🟩 비품 구역</button>
+      </div>
+      <div class="pick">
+        <button id="pick-mask">🟥 인식 제외 칠하기</button>
+        <button id="pick-erase">⬜ 제외 지우기</button>
+      </div>
+      <div class="desc" style="color:var(--dim);font-size:12px">
+        초록 상자 = 현재 감지 중인 손님 (실시간).<br>
+        빨간 셀 = 인식 제외 구역 (거울·포스터·TV·창밖 등 오탐원).<br>
+        키오스크 구역은 판정 방식이 '화면 구역'일 때만 사용됩니다.
+      </div>
+      <div id="zone-values" style="font-size:12px;color:var(--dim)"></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>자동 세팅 (캘리브레이션)<span class="hint">설치 직후 또는 오탐이 잦을 때 — 매장을 비운 상태로 실행</span></h2>
+  <div class="row">
+    <input type="number" id="calib-min" value="60" min="1" max="240" style="width:80px"> 분 동안
+    <button class="primary" id="calib-start">▶ 세팅 시작하기</button>
+    <button id="calib-stop">■ 중지 (지금까지 분량으로 적용)</button>
+    <button id="calib-clear">🗑 인식 제외 전체 해제</button>
+    <span id="calib-status" style="color:var(--warn)"></span>
+  </div>
+  <div class="desc" style="color:var(--dim);font-size:12px;margin-top:8px">
+    세팅 중에는 매장을 비워주세요. 그 동안 '사람'으로 잡히는 것(거울·포스터·TV·창밖 행인)은
+    전부 오탐으로 학습되어, 해당 위치가 자동으로 인식 제외 구역이 됩니다.
+    결과는 위 캔버스의 빨간 셀로 표시되며 저장 즉시 적용됩니다.
+  </div>
+</section>
+
+<section>
+  <h2>실시간 알림<span class="hint">알림이 잘못됐다면 '오탐'을 눌러주세요 — 기준이 자동 보정됩니다</span></h2>
+  <div class="events" id="events"><div class="empty">아직 알림이 없습니다.</div></div>
+</section>
+
+<section>
+  <h2>알림 신뢰도 (오탐율 관리)<span class="hint">오탐율이 목표를 넘는 룰은 기준이 자동으로 보수화됩니다</span></h2>
+  <div id="fpstats" class="desc" style="color:var(--dim);font-size:13px">아직 집계된 알림이 없습니다.</div>
+</section>
+
+<section>
+  <h2>결제 연동 테스트 (POS 웹훅)</h2>
+  <div class="row">
+    <input type="number" id="pos-tid" placeholder="손님 ID" style="width:110px">
+    <input type="number" id="pos-items" placeholder="잔 수" value="1" min="1" max="20" style="width:80px">
+    <button id="pos-send">결제 완료 처리</button>
+    <span class="desc" style="color:var(--dim);font-size:12px">
+      실제 운영에서는 POS기가 이 API(/api/purchase)를 호출합니다 — 잔 수는 허용 체류 계산과 일행 수 대조에 쓰입니다.
+    </span>
+  </div>
+</section>
+
+<section>
+  <h2>시스템 로그<span class="hint">문제 발생 시 원인을 한 번에 파악하기 위한 통합 로그</span></h2>
+  <pre id="logs">로딩 중…</pre>
+</section>
+
+<div class="savebar">
+  <span id="save-note">저장됨 ✓</span>
+  <button class="primary" id="save">설정 저장</button>
+</div>
+</main>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const api = (path, opt) => fetch(path, opt).then(r => r.json());
+
+/* ── 설정 로드/저장 ─────────────────────────────────── */
+const RULES = ["rule_fall","rule_announce","rule_no_kiosk_sit","rule_assist","rule_hw_alert",
+               "rule_overstay","activity_exempt","eco_mode","verbose_log","hours_enabled",
+               "rule_pet","rule_no_kids","rule_outside_food","rule_supply_abuse",
+               "rule_group_mismatch","rule_violence","rule_vandalism","rule_loitering",
+               "rule_tampering","rule_clean","rule_reco"];
+const SLIDERS = ["table_dwell_trigger_sec","announce_dwell_sec","announce_cooldown_sec",
+                 "no_kiosk_sit_grace_sec","fall_aspect_ratio","kiosk_face_w_frac",
+                 "yolo_conf","detect_every_n","fall_confirm_frames",
+                 "stay_per_purchase_sec","activity_min_move","eco_idle_sec",
+                 "obj_conf","obj_every_k","kids_age_limit","supply_abuse_visits",
+                 "behavior_sense","loiter_sec","tamper_sec","fp_target_pct"];
+let settings = null;
+
+/* 인식 제외 마스크: C와 동일한 32x18 셀 그리드, hex 144자로 직렬화 */
+const MASK_W = 32, MASK_H = 18, MASK_BYTES = MASK_W * MASK_H / 8;
+let maskBits = new Uint8Array(MASK_BYTES);
+const maskTest = c => (maskBits[c >> 3] >> (c & 7)) & 1;
+const maskSet = (c, on) => {
+  if (on) maskBits[c >> 3] |= 1 << (c & 7);
+  else maskBits[c >> 3] &= ~(1 << (c & 7));
+};
+const maskToHex = () => [...maskBits].map(b => b.toString(16).padStart(2, "0")).join("");
+const maskFromHex = hex => {
+  if (!hex || hex.length !== MASK_BYTES * 2) return;
+  for (let i = 0; i < MASK_BYTES; i++)
+    maskBits[i] = parseInt(hex.substr(i * 2, 2), 16) || 0;
+};
+
+/* 영업시간: "HH:MM" ↔ 자정 기준 분 */
+const minToTime = m => String(Math.floor(m/60)).padStart(2,"0") + ":" + String(m%60).padStart(2,"0");
+const timeToMin = t => { const [h, mm] = t.split(":").map(Number); return h * 60 + mm; };
+
+function fmtSec(s) {
+  s = Math.round(s);
+  if (s < 60) return s + "초";
+  if (s < 3600) return Math.floor(s/60) + "분" + (s%60 ? " " + s%60 + "초" : "");
+  return (s/3600).toFixed(1) + "시간";
+}
+function renderSliderLabels() {
+  $("v-dwell").textContent = fmtSec($("table_dwell_trigger_sec").value);
+  $("v-announce").textContent = fmtSec($("announce_dwell_sec").value);
+  $("v-cooldown").textContent = fmtSec($("announce_cooldown_sec").value);
+  $("v-grace").textContent = fmtSec($("no_kiosk_sit_grace_sec").value);
+  $("v-fall").textContent = (+$("fall_aspect_ratio").value).toFixed(2);
+  $("v-face").textContent = (+$("kiosk_face_w_frac").value).toFixed(3);
+  $("v-conf").textContent = (+$("yolo_conf").value).toFixed(2);
+  $("v-every").textContent = $("detect_every_n").value + "프레임";
+  $("v-fallframes").textContent = $("fall_confirm_frames").value + "회";
+  $("v-stay").textContent = fmtSec($("stay_per_purchase_sec").value);
+  $("v-act").textContent = (+$("activity_min_move").value).toFixed(3);
+  $("v-eco").textContent = fmtSec($("eco_idle_sec").value);
+  $("v-objconf").textContent = (+$("obj_conf").value).toFixed(2);
+  $("v-objk").textContent = $("obj_every_k").value + "회당 1회";
+  $("v-kids").textContent = $("kids_age_limit").value + "세 이하";
+  $("v-supply").textContent = $("supply_abuse_visits").value + "회";
+  $("v-sense").textContent = (+$("behavior_sense").value).toFixed(1);
+  $("v-loiter").textContent = fmtSec($("loiter_sec").value);
+  $("v-tamper").textContent = fmtSec($("tamper_sec").value);
+  $("v-fptarget").textContent = $("fp_target_pct").value + "%";
+}
+SLIDERS.forEach(id => $(id).addEventListener("input", renderSliderLabels));
+
+function applySettingsToUI(s) {
+  settings = s;
+  RULES.forEach(k => { $(k).checked = !!s[k]; });
+  SLIDERS.forEach(k => { $(k).value = s[k]; });
+  $("kiosk_trigger_mode").value = s.kiosk_trigger_mode;
+  $("open_time").value = minToTime(s.open_min ?? 540);
+  $("close_time").value = minToTime(s.close_min ?? 1320);
+  maskFromHex(s.mask_hex);
+  renderSliderLabels();
+  drawZones();
+}
+async function loadSettings() { applySettingsToUI(await api("/api/settings")); }
+
+$("save").onclick = async () => {
+  const body = {};
+  RULES.forEach(k => body[k] = $(k).checked);
+  SLIDERS.forEach(k => body[k] = +$(k).value);
+  body.kiosk_trigger_mode = +$("kiosk_trigger_mode").value;
+  body.open_min = timeToMin($("open_time").value || "09:00");
+  body.close_min = timeToMin($("close_time").value || "22:00");
+  body.mask_hex = maskToHex();            /* 수동 편집한 인식 제외 구역 */
+  ["kiosk_zone","table_zone","supply_zone"].forEach(z => {
+    ["x1","y1","x2","y2"].forEach(c => body[z+"_"+c] = settings[z+"_"+c]);
+  });
+  applySettingsToUI(await api("/api/settings", {method:"POST", body: JSON.stringify(body)}));
+  $("save-note").style.opacity = 1;
+  setTimeout(() => $("save-note").style.opacity = 0, 2000);
+};
+
+/* ── 상태 ───────────────────────────────────────────── */
+async function pollStatus() {
+  try {
+    const s = await api("/api/status");
+    $("conn").textContent = "● 연결됨";
+    $("conn").style.color = "var(--ok)";
+    $("st-people").textContent = s.people + "명";
+    $("st-fps").textContent = s.infer_fps.toFixed(1);
+    const cpu = $("st-cpu");
+    cpu.textContent = s.cpu.toFixed(1) + "%";
+    cpu.className = "v " + (s.cpu > 60 ? "danger" : s.cpu > 30 ? "warn" : "ok");
+    $("st-rss").textContent = s.rss.toFixed(0) + "MB";
+    const cam = $("st-cam");
+    cam.textContent = s.cam_state === 0 ? "정상" : s.cam_state_str;
+    cam.className = "v " + (s.cam_state === 0 ? "ok" : "danger");
+    const up = s.uptime;
+    $("st-up").textContent = up < 3600 ? Math.floor(up/60) + "분"
+                                       : (up/3600).toFixed(1) + "시간";
+    /* 운영 모드 + 캘리브레이션 진행률 */
+    const mode = $("st-mode");
+    mode.textContent = s.mode + (s.calib_pct >= 0 ? ` ${s.calib_pct}%` : "");
+    mode.className = "v " + (s.mode === "정상" ? "ok" : "warn");
+    $("calib-status").textContent = s.calib_pct >= 0
+      ? `세팅 진행 중 ${s.calib_pct}% — 매장을 비워주세요`
+      : "";
+    if (s.calib_pct < 0 && wasCalibrating) { loadSettings(); }  /* 종료 시 마스크 갱신 */
+    wasCalibrating = s.calib_pct >= 0;
+  } catch (e) {
+    $("conn").textContent = "● 연결 끊김";
+    $("conn").style.color = "var(--danger)";
+  }
+}
+
+/* ── 구역 캔버스 ────────────────────────────────────── */
+const canvas = $("zone-canvas"), ctx = canvas.getContext("2d");
+let livePeople = [], picking = null, dragStart = null, dragCur = null;
+let frameW = 1280, frameH = 720;   /* /api/live가 실제 프레임 크기로 갱신 */
+
+function zoneRect(prefix) {
+  const fw = frameW, fh = frameH;  /* 설정 좌표계는 원본 프레임 기준 */
+  return [settings[prefix+"_x1"]/fw*canvas.width, settings[prefix+"_y1"]/fh*canvas.height,
+          (settings[prefix+"_x2"]-settings[prefix+"_x1"])/fw*canvas.width,
+          (settings[prefix+"_y2"]-settings[prefix+"_y1"])/fh*canvas.height];
+}
+function drawZones() {
+  if (!settings) return;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  /* 인식 제외 마스크 (셀 그리드) — 구역보다 아래에 깔린다 */
+  const cw = canvas.width / MASK_W, chh = canvas.height / MASK_H;
+  ctx.fillStyle = "rgba(255,107,107,.30)";
+  for (let cy = 0; cy < MASK_H; cy++)
+    for (let cx = 0; cx < MASK_W; cx++)
+      if (maskTest(cy * MASK_W + cx)) ctx.fillRect(cx * cw, cy * chh, cw, chh);
+  /* 테이블 구역 */
+  ctx.strokeStyle = "#4da3ff"; ctx.fillStyle = "rgba(77,163,255,.12)"; ctx.lineWidth = 2;
+  let r = zoneRect("table_zone");
+  ctx.fillRect(...r); ctx.strokeRect(...r);
+  ctx.fillStyle = "#4da3ff"; ctx.font = "12px sans-serif";
+  ctx.fillText("테이블", r[0]+6, r[1]+16);
+  /* 키오스크 구역 */
+  ctx.strokeStyle = "#ffb84d"; ctx.fillStyle = "rgba(255,184,77,.12)";
+  r = zoneRect("kiosk_zone");
+  ctx.fillRect(...r); ctx.strokeRect(...r);
+  ctx.fillStyle = "#ffb84d";
+  ctx.fillText("키오스크", r[0]+6, r[1]+16);
+  /* 비품 구역 (시럽·빨대 어뷰징 감시) */
+  ctx.strokeStyle = "#3ecf8e"; ctx.fillStyle = "rgba(62,207,142,.10)";
+  r = zoneRect("supply_zone");
+  ctx.fillRect(...r); ctx.strokeRect(...r);
+  ctx.fillStyle = "#3ecf8e";
+  ctx.fillText("비품", r[0]+6, r[1]+16);
+  /* 실시간 인원 */
+  ctx.strokeStyle = "#3ecf8e"; ctx.lineWidth = 1.5;
+  livePeople.forEach(p => {
+    const x = p.x1*canvas.width, y = p.y1*canvas.height,
+          w = (p.x2-p.x1)*canvas.width, h = (p.y2-p.y1)*canvas.height;
+    ctx.strokeRect(x, y, w, h);
+    ctx.fillStyle = "#3ecf8e";
+    ctx.fillText("ID" + p.id + (p.reason !== "none" ? " " + p.reason : ""), x, y - 4);
+  });
+  /* 드래그 중인 새 구역 */
+  if (picking && dragStart && dragCur) {
+    ctx.strokeStyle = "#fff"; ctx.setLineDash([5,4]);
+    ctx.strokeRect(dragStart.x, dragStart.y, dragCur.x-dragStart.x, dragCur.y-dragStart.y);
+    ctx.setLineDash([]);
+  }
+  $("zone-values").textContent =
+    `테이블(${settings.table_zone_x1},${settings.table_zone_y1})~(${settings.table_zone_x2},${settings.table_zone_y2})  ` +
+    `키오스크(${settings.kiosk_zone_x1},${settings.kiosk_zone_y1})~(${settings.kiosk_zone_x2},${settings.kiosk_zone_y2})`;
+}
+function canvasPos(e) {
+  const b = canvas.getBoundingClientRect();
+  const pt = e.touches ? e.touches[0] : e;
+  return { x: (pt.clientX-b.left) * canvas.width/b.width,
+           y: (pt.clientY-b.top) * canvas.height/b.height };
+}
+/* 도구 선택: 구역 드래그(table/kiosk) 또는 마스크 칠하기/지우기(mask/erase) */
+function pick(which) {
+  picking = which;
+  $("pick-table").classList.toggle("active", which === "table_zone");
+  $("pick-kiosk").classList.toggle("active", which === "kiosk_zone");
+  $("pick-supply").classList.toggle("active", which === "supply_zone");
+  $("pick-mask").classList.toggle("active", which === "mask");
+  $("pick-erase").classList.toggle("active", which === "erase");
+}
+$("pick-table").onclick = () => pick("table_zone");
+$("pick-kiosk").onclick = () => pick("kiosk_zone");
+$("pick-supply").onclick = () => pick("supply_zone");
+$("pick-mask").onclick = () => pick("mask");
+$("pick-erase").onclick = () => pick("erase");
+
+const isMaskTool = () => picking === "mask" || picking === "erase";
+
+/* 마스크 도구: 커서가 지나가는 셀을 즉시 칠하거나 지운다 */
+function paintMaskAt(pos) {
+  const cx = Math.min(MASK_W - 1, Math.max(0, Math.floor(pos.x / canvas.width * MASK_W)));
+  const cy = Math.min(MASK_H - 1, Math.max(0, Math.floor(pos.y / canvas.height * MASK_H)));
+  maskSet(cy * MASK_W + cx, picking === "mask");
+  drawZones();
+}
+
+function dragBegin(e) {
+  if (!picking) return;
+  dragStart = canvasPos(e);
+  if (isMaskTool()) paintMaskAt(dragStart);
+  e.preventDefault();
+}
+function dragMove(e) {
+  if (!dragStart) return;
+  dragCur = canvasPos(e);
+  if (isMaskTool()) paintMaskAt(dragCur);
+  drawZones();
+  e.preventDefault();
+}
+function dragEnd(e) {
+  if (isMaskTool()) { dragStart = dragCur = null; return; }  /* 도구 유지 — 이어서 칠하기 */
+  if (!picking || !dragStart || !dragCur) { dragStart = dragCur = null; return; }
+  const fw = frameW, fh = frameH;
+  const x1 = Math.min(dragStart.x, dragCur.x)/canvas.width*fw,
+        x2 = Math.max(dragStart.x, dragCur.x)/canvas.width*fw,
+        y1 = Math.min(dragStart.y, dragCur.y)/canvas.height*fh,
+        y2 = Math.max(dragStart.y, dragCur.y)/canvas.height*fh;
+  if (x2-x1 > 20 && y2-y1 > 20) {
+    settings[picking+"_x1"] = Math.round(x1); settings[picking+"_y1"] = Math.round(y1);
+    settings[picking+"_x2"] = Math.round(x2); settings[picking+"_y2"] = Math.round(y2);
+  }
+  dragStart = dragCur = null; pick(null);
+  drawZones();
+}
+canvas.addEventListener("mousedown", dragBegin);
+canvas.addEventListener("mousemove", dragMove);
+canvas.addEventListener("mouseup", dragEnd);
+canvas.addEventListener("touchstart", dragBegin);
+canvas.addEventListener("touchmove", dragMove);
+canvas.addEventListener("touchend", dragEnd);
+
+async function pollLive() {
+  try {
+    const l = await api("/api/live");
+    livePeople = l.people;
+    if (l.w > 0 && l.h > 0) { frameW = l.w; frameH = l.h; }
+    drawZones();
+  } catch (e) { /* 연결 표시는 status 폴링이 담당 */ }
+}
+
+/* ── 이벤트 ─────────────────────────────────────────── */
+const TYPE_KO = { fall_alert:"🚨 쓰러짐/낙상", announce_dwell:"📢 장기체류",
+                  kiosk_assist:"🙋 도움요청", no_kiosk_sit:"🪑 주문없이 착석",
+                  hw_fault:"📷 카메라 이상", overstay:"⏰ 초과체류",
+                  pet:"🐕 반려동물", minor_suspect:"🧒 미성년 의심",
+                  outside_food:"🍔 외부음식", supply_abuse:"🥤 비품 어뷰징",
+                  group_mismatch:"👥 일행·주문 불일치", violence:"🥊 폭력 의심",
+                  vandalism:"🔨 기물파손 의심", loitering:"🚶 배회",
+                  tampering:"🔧 무단 조작", clean_needed:"🧹 청소 필요",
+                  kiosk_reco:"💡 추천 컨텍스트" };
+let lastEvId = 0, evCards = [];
+
+async function pollEvents() {
+  try {
+    const r = await api("/api/events?since=" + lastEvId);
+    if (!r.events.length) return;
+    lastEvId = r.last_id;
+    const box = $("events");
+    if (evCards.length === 0) box.innerHTML = "";
+    r.events.forEach(ev => {
+      const d = document.createElement("div");
+      d.className = "ev " + ev.type;
+      d.innerHTML =
+        `<div class="head"><b>${TYPE_KO[ev.type] || ev.type}</b>` +
+        `<span class="type">${ev.ts}${ev.track_id >= 0 ? " · ID" + ev.track_id : ""}</span>` +
+        (ev.type !== "hw_fault"
+          ? `<button data-kind="${ev.type}">오탐 신고</button>` : "") +
+        `</div><div>${ev.message}</div>` +
+        (ev.journey ? `<div class="journey">동선: ${ev.journey}</div>` : "");
+      const btn = d.querySelector("button");
+      if (btn) btn.onclick = async () => {
+        const res = await api("/api/feedback",
+                              {method:"POST", body: JSON.stringify({kind: btn.dataset.kind})});
+        btn.textContent = res.ok ? "보정됨: " + res.desc : "보정 불가";
+        btn.disabled = true;
+        loadSettings();          /* 보정된 임계값을 슬라이더에 반영 */
+      };
+      box.prepend(d);
+      evCards.push(d);
+      if (evCards.length > 60) evCards.shift().remove();
+    });
+  } catch (e) {}
+}
+
+/* ── 자동 세팅 (캘리브레이션) ───────────────────────── */
+let wasCalibrating = false;
+$("calib-start").onclick = async () => {
+  const minutes = +$("calib-min").value || 60;
+  if (!confirm(`${minutes}분 동안 자동 세팅을 시작합니다.\n세팅 중에는 매장을 비워주세요. 계속할까요?`)) return;
+  await api("/api/calibrate", {method:"POST",
+            body: JSON.stringify({action:"start", minutes})});
+  pollStatus();
+};
+$("calib-stop").onclick = async () => {
+  await api("/api/calibrate", {method:"POST", body: JSON.stringify({action:"stop"})});
+  setTimeout(loadSettings, 1000);   /* 방금 생성된 마스크 반영 */
+  pollStatus();
+};
+$("calib-clear").onclick = async () => {
+  if (!confirm("인식 제외 구역을 전부 해제할까요? (오탐이 다시 늘 수 있습니다)")) return;
+  await api("/api/calibrate", {method:"POST", body: JSON.stringify({action:"clear"})});
+  setTimeout(loadSettings, 500);
+};
+
+/* ── 결제 웹훅 테스트 / 로그 ────────────────────────── */
+$("pos-send").onclick = async () => {
+  const tid = +$("pos-tid").value;
+  if (!Number.isInteger(tid)) return alert("손님 ID(정수)를 입력하세요");
+  const items = Math.max(1, +$("pos-items").value || 1);
+  await api("/api/purchase", {method:"POST",
+            body: JSON.stringify({track_id: tid, items})});
+  $("pos-send").textContent = "처리됨 ✓";
+  setTimeout(() => $("pos-send").textContent = "결제 완료 처리", 1500);
+};
+
+/* ── 오탐율 표 (알림 신뢰도) ────────────────────────── */
+async function pollFpStats() {
+  try {
+    const stats = await api("/api/fpstats");
+    if (!stats.length) return;
+    const target = settings ? settings.fp_target_pct : 5;
+    $("fpstats").innerHTML =
+      `<table style="width:100%;border-collapse:collapse;font-size:13px">` +
+      `<tr style="color:var(--dim)"><td>룰</td><td>알림</td><td>오탐 신고</td><td>오탐율</td></tr>` +
+      stats.map(s =>
+        `<tr><td>${TYPE_KO[s.kind] || s.kind}</td><td>${s.total}</td><td>${s.fp}</td>` +
+        `<td style="color:${s.rate > target ? "var(--danger)" : "var(--ok)"}">` +
+        `${s.rate.toFixed(1)}%</td></tr>`).join("") +
+      `</table>`;
+  } catch (e) {}
+}
+
+async function pollLogs() {
+  try {
+    const logs = await api("/api/logs");
+    $("logs").textContent = logs.map(l => `[${l.ts}][${l.lv}][${l.tag}] ${l.msg}`).join("\n");
+  } catch (e) {}
+}
+
+/* ── 시작 ───────────────────────────────────────────── */
+loadSettings();
+pollStatus(); setInterval(pollStatus, 5000);
+pollLive(); setInterval(pollLive, 1000);
+pollEvents(); setInterval(pollEvents, 2000);
+pollLogs(); setInterval(pollLogs, 5000);
+pollFpStats(); setInterval(pollFpStats, 10000);
+</script>
+</body>
+</html>

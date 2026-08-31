@@ -2,17 +2,13 @@
 
 #include <stdio.h>
 #include <string.h>
-
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
+#include <time.h>
 
 double mono_now(void)
 {
-    static LARGE_INTEGER freq = { 0 };
-    if (freq.QuadPart == 0) QueryPerformanceFrequency(&freq);
-    LARGE_INTEGER t;
-    QueryPerformanceCounter(&t);
-    return (double)t.QuadPart / (double)freq.QuadPart;
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (double)t.tv_sec + (double)t.tv_nsec / 1e9;
 }
 
 void prof_init(StageProfiler *p, double report_interval_sec)

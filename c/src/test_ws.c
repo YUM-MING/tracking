@@ -7,9 +7,7 @@
  */
 #include <stdio.h>
 #include <string.h>
-
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
+#include <unistd.h>
 
 #include "config.h"
 #include "fsm.h"
@@ -17,7 +15,6 @@
 
 int main(int argc, char **argv)
 {
-    SetConsoleOutputCP(CP_UTF8);
     if (argc < 2) {
         fprintf(stderr, "사용법: %s ws://호스트:포트/경로\n", argv[0]);
         return 1;
@@ -31,15 +28,18 @@ int main(int argc, char **argv)
     const EventKind kinds[] = { EV_FALL_ALERT, EV_ANNOUNCE_DWELL, EV_KIOSK_ASSIST };
     for (int i = 0; i < 3; i++) {
         Event ev;
+        memset(&ev, 0, sizeof(ev));              /* journey 등 신규 필드 초기화 */
         ev.kind = kinds[i];
         ev.track_id = i + 1;
         ev.ts = 0;
         snprintf(ev.message, sizeof(ev.message),
                  "테스트 이벤트 %d (\"따옴표\" 이스케이프 확인)", i + 1);
+        snprintf(ev.journey, sizeof(ev.journey),
+                 "12:00:00 입장 → 12:0%d:00 착석", i + 1);
         ws_send_event(s, &ev);
     }
 
-    Sleep(3000);   /* 워커 스레드가 연결·전송을 마칠 시간 */
+    sleep(3);   /* 워커 스레드가 연결·전송을 마칠 시간 */
     ws_stop(s);
     ws_destroy(s);
     fprintf(stderr, "전송 시도 완료 — 서버 수신 로그를 확인하세요\n");

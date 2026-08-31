@@ -18,10 +18,12 @@ typedef struct RoiRouter RoiRouter;
 RoiRouter *router_create(const PipelineConfig *cfg);
 void router_destroy(RoiRouter *r);
 
-/* 트리거 대상 선별. 반환: 대상 수 (최대 cfg->max_precision_targets) */
+/* 트리거 대상 선별. 반환: 대상 수 (최대 cfg->max_precision_targets)
+ * flags가 NULL이 아니면 people과 같은 순서로 사람별 구역 판정을 채운다
+ * (상태 머신의 행동 필터·동선 기록이 이 값을 재사용 — 중복 계산 방지). */
 int router_route(RoiRouter *r, const FrameView *frame,
                  const TrackedPerson *people, int n_people, double now,
-                 PrecisionTarget *out, int max_out);
+                 PrecisionTarget *out, int max_out, ZoneFlags *flags);
 
 /* 상태 머신에서 참조하는 테이블 체류 시간 */
 double router_table_dwell_seconds(const RoiRouter *r, int track_id, double now);

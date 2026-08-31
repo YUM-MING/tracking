@@ -2,88 +2,142 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
+#include <unistd.h>
+#include <pthread.h>
 
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#include <psapi.h>
-
-#pragma comment(lib, "psapi.lib")
+#include <sys/resource.h>
+#include <mach/mach.h>
+#include <mach/mach_host.h>
+#include <pthread/qos.h>
 
 void apply_cpu_affinity(const PipelineConfig *cfg)
 {
     if (cfg->cpu_affinity_mask == 0) return;
-    if (SetProcessAffinityMask(GetCurrentProcess(),
-                               (DWORD_PTR)cfg->cpu_affinity_mask))
-        fprintf(stderr, "[리소스] CPU 친화도 지정: mask=0x%llx\n",
-                cfg->cpu_affinity_mask);
-    else
-        fprintf(stderr, "[리소스] CPU 친화도 지정 실패\n");
+    fprintf(stderr, "[리소스] macOS는 프로세스 CPU affinity 고정을 지원하지 않음 — 무시됨\n");
+}
+
+/* macOS: 코어 고정 대신 QoS 클래스로 성능/효율 코어 배치를 유도한다.
+ * (4200U/리눅스 이식 시 이 함수만 pthread_setaffinity_np로 교체하면 된다) */
+void apply_thread_role(ThreadRole role)
+{
+    qos_class_t qos;
+    switch (role) {
+    case THREAD_ROLE_CAPTURE: qos = QOS_CLASS_USER_INTERACTIVE; break;
+    case THREAD_ROLE_INFER:   qos = QOS_CLASS_USER_INITIATED;   break;
+    case THREAD_ROLE_IO:      qos = QOS_CLASS_UTILITY;          break;
+    default:                  qos = QOS_CLASS_BACKGROUND;       break;
+    }
+    pthread_set_qos_class_self_np(qos, 0);
 }
 
 struct ResourceMonitor {
     const PipelineConfig *cfg;
-    HANDLE thread;
-    HANDLE stop_event;
-    double peak_cpu;           /* 기기 전체 CPU 피크 % */
+    pthread_t thread;
+    bool has_thread;
+    pthread_mutex_t lock;
+    pthread_cond_t cond;
+    bool stop;
+    double peak_cpu;
     double peak_rss_mb;
+    double last_sys_cpu;       /* 점주 페이지 상태 표시용 최근 측정치 */
+    double last_rss_mb;
     int n_cores;
 };
 
-static ULONGLONG ft_to_u64(FILETIME ft)
+static double mono_seconds(void)
 {
-    return ((ULONGLONG)ft.dwHighDateTime << 32) | ft.dwLowDateTime;
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (double)t.tv_sec + (double)t.tv_nsec / 1e9;
 }
 
-static DWORD WINAPI monitor_main(LPVOID arg)
+/* 프로세스 누적 CPU 시간(초, user+system) — GetProcessTimes 대응 */
+static double proc_cpu_seconds(void)
+{
+    struct rusage ru;
+    getrusage(RUSAGE_SELF, &ru);
+    return (double)ru.ru_utime.tv_sec + (double)ru.ru_utime.tv_usec / 1e6
+         + (double)ru.ru_stime.tv_sec + (double)ru.ru_stime.tv_usec / 1e6;
+}
+
+/* 프로세스 RSS(MB) — GetProcessMemoryInfo 대응 */
+static double proc_rss_mb(void)
+{
+    struct mach_task_basic_info info;
+    mach_msg_type_number_t count = MACH_TASK_BASIC_INFO_COUNT;
+    if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO,
+                  (task_info_t)&info, &count) != KERN_SUCCESS)
+        return 0;
+    return (double)info.resident_size / (1024.0 * 1024.0);
+}
+
+/* 기기 전체 CPU 틱(비유휴/전체) — GetSystemTimes 대응 */
+static void host_cpu_ticks(unsigned long long *busy, unsigned long long *total)
+{
+    host_cpu_load_info_data_t info;
+    mach_msg_type_number_t count = HOST_CPU_LOAD_INFO_COUNT;
+    if (host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO,
+                        (host_info_t)&info, &count) != KERN_SUCCESS) {
+        *busy = 0; *total = 0;
+        return;
+    }
+    unsigned long long user = info.cpu_ticks[CPU_STATE_USER];
+    unsigned long long sys  = info.cpu_ticks[CPU_STATE_SYSTEM];
+    unsigned long long nice = info.cpu_ticks[CPU_STATE_NICE];
+    unsigned long long idle = info.cpu_ticks[CPU_STATE_IDLE];
+    *busy = user + sys + nice;
+    *total = *busy + idle;
+}
+
+static void *monitor_main(void *arg)
 {
     ResourceMonitor *m = arg;
-    HANDLE proc = GetCurrentProcess();
+    apply_thread_role(THREAD_ROLE_MONITOR);
 
-    FILETIME dummy_c, dummy_e, k0, u0, sys_idle0, sys_k0, sys_u0;
-    GetProcessTimes(proc, &dummy_c, &dummy_e, &k0, &u0);
-    GetSystemTimes(&sys_idle0, &sys_k0, &sys_u0);
-    ULONGLONG proc0 = ft_to_u64(k0) + ft_to_u64(u0);
-    ULONGLONG idle0 = ft_to_u64(sys_idle0);
-    ULONGLONG sys0 = ft_to_u64(sys_k0) + ft_to_u64(sys_u0);
-    double wall0 = 0;
-    {
-        LARGE_INTEGER f, t;
-        QueryPerformanceFrequency(&f);
-        QueryPerformanceCounter(&t);
-        wall0 = (double)t.QuadPart / f.QuadPart;
-    }
+    double proc0 = proc_cpu_seconds();
+    double wall0 = mono_seconds();
+    unsigned long long busy0, total0;
+    host_cpu_ticks(&busy0, &total0);
 
-    DWORD interval = (DWORD)(m->cfg->monitor_interval_sec * 1000);
-    while (WaitForSingleObject(m->stop_event, interval) == WAIT_TIMEOUT) {
-        FILETIME k1, u1, sys_idle1, sys_k1, sys_u1;
-        GetProcessTimes(proc, &dummy_c, &dummy_e, &k1, &u1);
-        GetSystemTimes(&sys_idle1, &sys_k1, &sys_u1);
-        ULONGLONG proc1 = ft_to_u64(k1) + ft_to_u64(u1);
-        ULONGLONG idle1 = ft_to_u64(sys_idle1);
-        ULONGLONG sys1 = ft_to_u64(sys_k1) + ft_to_u64(sys_u1);
+    double interval = m->cfg->monitor_interval_sec;
 
-        LARGE_INTEGER f, t;
-        QueryPerformanceFrequency(&f);
-        QueryPerformanceCounter(&t);
-        double wall1 = (double)t.QuadPart / f.QuadPart;
+    pthread_mutex_lock(&m->lock);
+    for (;;) {
+        struct timespec deadline;
+        clock_gettime(CLOCK_REALTIME, &deadline);
+        deadline.tv_sec += (time_t)interval;
+        deadline.tv_nsec += (long)((interval - (long)interval) * 1e9);
+        if (deadline.tv_nsec >= 1000000000L) {
+            deadline.tv_nsec -= 1000000000L;
+            deadline.tv_sec++;
+        }
+
+        int rc = 0;
+        while (!m->stop && rc == 0)
+            rc = pthread_cond_timedwait(&m->cond, &m->lock, &deadline);
+        if (m->stop) break;                 /* 타임아웃(rc!=0)일 때만 측정 진행 */
+        pthread_mutex_unlock(&m->lock);
+
+        double proc1 = proc_cpu_seconds();
+        double wall1 = mono_seconds();
+        unsigned long long busy1, total1;
+        host_cpu_ticks(&busy1, &total1);
+
         double wall_sec = wall1 - wall0;
         if (wall_sec <= 0) wall_sec = 1e-3;
 
-        /* 프로세스 CPU: 1코어 기준 % (psutil.Process().cpu_percent 대응) */
-        double proc_cpu = (double)(proc1 - proc0) / 1e7 / wall_sec * 100.0;
-        /* 기기 전체 CPU: 시스템 시간 중 비유휴 비율 */
-        ULONGLONG sys_delta = sys1 - sys0;        /* 커널+유저 (유휴 포함) */
-        ULONGLONG idle_delta = idle1 - idle0;
-        double sys_cpu = sys_delta > 0
-            ? (double)(sys_delta - idle_delta) / (double)sys_delta * 100.0 : 0;
-
-        PROCESS_MEMORY_COUNTERS pmc;
-        double rss_mb = 0;
-        if (GetProcessMemoryInfo(proc, &pmc, sizeof(pmc)))
-            rss_mb = (double)pmc.WorkingSetSize / (1024.0 * 1024.0);
+        double proc_cpu = (proc1 - proc0) / wall_sec * 100.0;   /* 1코어 기준 % */
+        unsigned long long dt_busy = busy1 - busy0, dt_total = total1 - total0;
+        double sys_cpu = dt_total > 0 ? (double)dt_busy / (double)dt_total * 100.0 : 0;
+        double rss_mb = proc_rss_mb();
 
         if (sys_cpu > m->peak_cpu) m->peak_cpu = sys_cpu;
         if (rss_mb > m->peak_rss_mb) m->peak_rss_mb = rss_mb;
+        pthread_mutex_lock(&m->lock);
+        m->last_sys_cpu = sys_cpu;
+        m->last_rss_mb = rss_mb;
+        pthread_mutex_unlock(&m->lock);
 
         const char *tag = sys_cpu >= m->cfg->cpu_alert_pct ? "[피크 경고] " : "";
         fprintf(stderr,
@@ -91,42 +145,56 @@ static DWORD WINAPI monitor_main(LPVOID arg)
                 "RSS %.0fMB (sys peak %.1f%% / %.0fMB)\n",
                 tag, proc_cpu, sys_cpu, rss_mb, m->peak_cpu, m->peak_rss_mb);
 
-        proc0 = proc1; idle0 = idle1; sys0 = sys1; wall0 = wall1;
+        proc0 = proc1; wall0 = wall1; busy0 = busy1; total0 = total1;
+        pthread_mutex_lock(&m->lock);
     }
-    return 0;
+    pthread_mutex_unlock(&m->lock);
+    return NULL;
 }
 
 ResourceMonitor *monitor_create(const PipelineConfig *cfg)
 {
     ResourceMonitor *m = calloc(1, sizeof(ResourceMonitor));
     m->cfg = cfg;
-    m->stop_event = CreateEvent(NULL, TRUE, FALSE, NULL);
-    SYSTEM_INFO si;
-    GetSystemInfo(&si);
-    m->n_cores = (int)si.dwNumberOfProcessors;
+    pthread_mutex_init(&m->lock, NULL);
+    pthread_cond_init(&m->cond, NULL);
+    long n = sysconf(_SC_NPROCESSORS_ONLN);
+    m->n_cores = n > 0 ? (int)n : 1;
     return m;
 }
 
 void monitor_start(ResourceMonitor *m)
 {
-    m->thread = CreateThread(NULL, 0, monitor_main, m, 0, NULL);
+    if (pthread_create(&m->thread, NULL, monitor_main, m) == 0)
+        m->has_thread = true;
 }
 
 void monitor_stop(ResourceMonitor *m)
 {
-    if (!m->thread) return;
-    SetEvent(m->stop_event);
-    WaitForSingleObject(m->thread, 2000);
-    CloseHandle(m->thread);
-    m->thread = NULL;
+    if (!m->has_thread) return;
+    pthread_mutex_lock(&m->lock);
+    m->stop = true;
+    pthread_mutex_unlock(&m->lock);
+    pthread_cond_broadcast(&m->cond);
+    pthread_join(m->thread, NULL);
+    m->has_thread = false;
 }
 
 double monitor_peak_cpu(const ResourceMonitor *m) { return m->peak_cpu; }
 double monitor_peak_rss_mb(const ResourceMonitor *m) { return m->peak_rss_mb; }
 
+void monitor_last(ResourceMonitor *m, double *sys_cpu_pct, double *rss_mb)
+{
+    pthread_mutex_lock(&m->lock);
+    *sys_cpu_pct = m->last_sys_cpu;
+    *rss_mb = m->last_rss_mb;
+    pthread_mutex_unlock(&m->lock);
+}
+
 void monitor_destroy(ResourceMonitor *m)
 {
     if (!m) return;
-    if (m->stop_event) CloseHandle(m->stop_event);
+    pthread_mutex_destroy(&m->lock);
+    pthread_cond_destroy(&m->cond);
     free(m);
 }

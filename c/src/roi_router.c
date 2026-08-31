@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "logger.h"
+
 #define MAX_TIMERS 256
 
 const char *reason_str(TriggerReason r)
@@ -21,6 +23,10 @@ typedef struct {
     int track_id;
     double table_enter_ts;     /* <0 = 테이블 밖 */
     double last_seen;
+    /* 직전 판정 (전환 시에만 로그를 남기기 위한 상태 — 매 프레임 로그 방지) */
+    bool prev_at_kiosk;
+    bool prev_in_table;
+    TriggerReason prev_reason;
 } TrackTimer;
 
 struct RoiRouter {
@@ -105,12 +111,13 @@ static void router_gc(RoiRouter *r, double now)
 
 int router_route(RoiRouter *r, const FrameView *frame,
                  const TrackedPerson *people, int n_people, double now,
-                 PrecisionTarget *out, int max_out)
+                 PrecisionTarget *out, int max_out, ZoneFlags *flags)
 {
     const PipelineConfig *cfg = r->cfg;
     int n_out = 0;
 
-    for (int i = 0; i < n_people && n_out < max_out; i++) {
+    /* 대상 상한(n_out)과 무관하게 전 인원의 타이머/플래그는 항상 갱신한다 */
+    for (int i = 0; i < n_people; i++) {
         const TrackedPerson *p = &people[i];
         TrackTimer *tm = timer_get(r, p->track_id, true);
         if (tm) tm->last_seen = now;
@@ -124,7 +131,29 @@ int router_route(RoiRouter *r, const FrameView *frame,
          * (키오스크로 이동해도 타이머가 남는 오탐 방지) */
         bool in_table = zone_contains(&cfg->table_zone, p->center_x, p->center_y)
                         && !at_kiosk;
+        if (flags) {
+            flags[i].at_kiosk = at_kiosk;
+            flags[i].in_table = in_table;
+            /* 비품대 구역: 어뷰징 방문 카운트용 (키오스크/테이블과 독립) */
+            flags[i].in_supply = zone_contains(&cfg->supply_zone,
+                                               p->center_x, p->center_y);
+        }
         if (tm) {
+            /* 판단 로그: 구역 진입/이탈 전환 시에만 근거와 함께 기록 */
+            if (at_kiosk != tm->prev_at_kiosk) {
+                float fw_px = person_face_width(p, cfg->kpt_valid_conf);
+                LOGD("판정", "ID %d 키오스크 %s (얼굴폭 비율 %.3f / 기준 %.3f)",
+                     p->track_id, at_kiosk ? "근접" : "이탈",
+                     fw_px >= 0 ? (double)(fw_px / (float)frame->w) : -1.0,
+                     (double)cfg->kiosk_face_w_frac);
+                tm->prev_at_kiosk = at_kiosk;
+            }
+            if (in_table != tm->prev_in_table) {
+                LOGD("판정", "ID %d 테이블 구역 %s (발밑 %.0f,%.0f)",
+                     p->track_id, in_table ? "진입 — 체류 타이머 시작" : "이탈 — 타이머 리셋",
+                     (double)p->center_x, (double)p->center_y);
+                tm->prev_in_table = in_table;
+            }
             if (in_table) {
                 if (tm->table_enter_ts < 0) tm->table_enter_ts = now;
             } else {
@@ -147,7 +176,15 @@ int router_route(RoiRouter *r, const FrameView *frame,
                  now - tm->table_enter_ts >= cfg->table_dwell_trigger_sec)
             reason = REASON_TABLE_DWELL;
 
-        if (reason != REASON_NONE) {
+        /* 판단 로그: 정밀 분석 트리거 사유가 바뀔 때만 기록 */
+        if (tm && reason != tm->prev_reason) {
+            LOGD("판정", "ID %d 정밀 분석 트리거: %s → %s (종횡비 %.2f)",
+                 p->track_id, reason_str(tm->prev_reason), reason_str(reason),
+                 (double)person_aspect_ratio(p));
+            tm->prev_reason = reason;
+        }
+
+        if (reason != REASON_NONE && n_out < max_out) {
             PrecisionTarget *t = &out[n_out];
             t->track_id = p->track_id;
             t->reason = reason;

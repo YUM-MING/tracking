@@ -91,6 +91,13 @@ typedef enum {
 
 const char *reason_str(TriggerReason r);
 
+/* 라우터가 사람별로 계산하는 구역 판정 (상태 머신의 룰 필터·동선 기록용) */
+typedef struct {
+    bool at_kiosk;             /* 키오스크 근접/구역 내 */
+    bool in_table;             /* 테이블 구역 내 (키오스크 우선) */
+    bool in_supply;            /* 비품대 구역 내 (어뷰징 방문 카운트용) */
+} ZoneFlags;
+
 /* 3단계로 전달되는 정밀 분석 대상 (크롭은 원본 프레임 내 사각형 = zero-copy) */
 typedef struct {
     int track_id;

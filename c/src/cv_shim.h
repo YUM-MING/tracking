@@ -7,7 +7,7 @@
  *   카메라 캡처(videoio), 디버그 창(highgui), 오버레이 그리기(imgproc draw).
  *   운영 배포(show_window=false)에서는 캡처만 쓴다.
  * - 알고리즘 경로(리사이즈, HSV, 추론 전처리)는 imgproc.c의 순수 C 구현 사용.
- */
+ */ 
 #ifndef CV_SHIM_H
 #define CV_SHIM_H
 
