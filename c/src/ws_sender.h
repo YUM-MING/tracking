@@ -21,6 +21,10 @@ WsSender *ws_create(const PipelineConfig *cfg);
 void ws_start(WsSender *s);
 /* 비차단 적재. 백로그 초과 시 가장 오래된 것부터 버린다. */
 void ws_send_event(WsSender *s, const Event *ev);
+/* 생존 신호 (필드 테스트 회의: 1분마다 신호 — 안 오면 수신 측이 알림).
+ * 상태 요약을 실어 원격에서 건강 상태까지 한 번에 본다. */
+void ws_send_heartbeat(WsSender *s, double uptime_sec, double cpu_pct,
+                       double rss_mb, int n_people, double infer_fps);
 void ws_stop(WsSender *s);
 void ws_destroy(WsSender *s);
 

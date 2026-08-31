@@ -249,6 +249,41 @@ static void draw_debug(const PipelineConfig *cfg, FrameView *f,
     cvs_text(f->data, f->w, f->h, f->stride, fps_label, 10, 25, 0.7, 255, 255, 255, 2);
 }
 
+/* ── 비식별 표시 모드 (8월 말 회의 ③ 카메라 거부감 해소) ──
+ * 16px 블록 평균으로 디테일을 뭉개 인물 식별을 불가능하게 만들고,
+ * 밝기를 열화상풍 의사색(어두움=파랑 → 밝음=노랑/흰색)으로 입힌다.
+ * 위에 그려지는 박스/스켈레톤/라벨은 그대로 또렷이 보인다. */
+static void privacy_mosaic(FrameView *f)
+{
+    const int B = 16;                       /* 블록 크기 (px) */
+    for (int by = 0; by < f->h; by += B) {
+        int bh = by + B > f->h ? f->h - by : B;
+        for (int bx = 0; bx < f->w; bx += B) {
+            int bw = bx + B > f->w ? f->w - bx : B;
+            /* 블록 평균 밝기 */
+            unsigned long sum = 0;
+            for (int y = by; y < by + bh; y++) {
+                const uint8_t *p = f->data + (size_t)y * f->stride + (size_t)bx * 3;
+                for (int x = 0; x < bw; x++, p += 3)
+                    sum += (unsigned)(p[0] * 29 + p[1] * 150 + p[2] * 77) >> 8;
+            }
+            int y8 = (int)(sum / (unsigned long)(bw * bh));
+            /* 의사 열화상 팔레트 (BGR) */
+            int r = y8 < 128 ? y8 * 2 : 255;
+            int g = y8 < 128 ? 0 : (y8 - 128) * 2;
+            int b = y8 < 64 ? 128 + y8 * 2 : (y8 < 160 ? 255 - (y8 - 64) * 2 : 0);
+            for (int y = by; y < by + bh; y++) {
+                uint8_t *p = f->data + (size_t)y * f->stride + (size_t)bx * 3;
+                for (int x = 0; x < bw; x++, p += 3) {
+                    p[0] = (uint8_t)b;
+                    p[1] = (uint8_t)g;
+                    p[2] = (uint8_t)r;
+                }
+            }
+        }
+    }
+}
+
 /* 상태 머신 → 라우터 체류 시간 조회 어댑터 */
 static double dwell_adapter(void *ctx, int track_id, double now)
 {
@@ -420,6 +455,8 @@ int main(int argc, char **argv)
             cfg.log_path = argv[i] + 6;
         else if (strncmp(argv[i], "--data-dir=", 11) == 0)
             cfg.data_dir = argv[i] + 11;   /* 빈 값(--data-dir=)이면 축적 끔 */
+        else if (strcmp(argv[i], "--privacy") == 0)
+            cfg.privacy_view = true;       /* 열화상풍 비식별 표시 (현장 데모용) */
         else
             source = argv[i];
     }
@@ -500,6 +537,7 @@ int main(int argc, char **argv)
     double infer_t0 = mono_now(), infer_fps = 0;
     int infer_n = 0;
     double last_status_ts = 0;
+    double last_heartbeat_ts = 0;          /* 첫 하트비트는 기동 직후 상태 갱신 때 */
 
     TrackedPerson people[MAX_PEOPLE];
     int n_people = 0;                              /* 스킵 프레임에서는 직전 결과 재사용 */
@@ -836,11 +874,20 @@ status_update:
             st.ws_enabled = cfg.ws_url && cfg.ws_url[0];
             st.settings_version = settings_version;
             admin_update_status(admin, &st);
+
+            /* 생존 신호: N초마다 상태 요약을 서버로 (수신 측이 결손 감지) */
+            if (cfg.heartbeat_sec > 0 &&
+                now - last_heartbeat_ts >= cfg.heartbeat_sec) {
+                last_heartbeat_ts = now;
+                ws_send_heartbeat(sender, st.uptime_sec, st.cpu_pct,
+                                  st.rss_mb, n_people, infer_fps);
+            }
         }
 
         /* ── 디버그 시각화 (표시 자체도 CPU 비용 — 주기 조절 가능) ──
          * frame은 소비자 소유 슬롯이라 오버레이를 그려도 안전하다. */
         if (cfg.show_window && !hours_off && frame_idx % cfg.display_every_n == 0) {
+            if (cfg.privacy_view) privacy_mosaic(&frame);
             draw_debug(&cfg, &frame, people, n_people, targets, n_targets,
                        router, mono_now(), infer_fps);
             cvs_show("Hybrid Cascade Pipeline (C)", frame.data,

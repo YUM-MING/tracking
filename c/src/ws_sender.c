@@ -316,6 +316,36 @@ static void json_escape(const char *in, char *out, size_t out_len)
     out[o] = 0;
 }
 
+/* 페이로드 큐 적재 (이벤트/하트비트 공용) */
+static void ws_enqueue(WsSender *s, const WsPayload *payload)
+{
+    pthread_mutex_lock(&s->lock);
+    if (s->count >= MAX_BACKLOG) {           /* 백로그 초과 — 오래된 것 폐기 */
+        s->head = (s->head + 1) % MAX_BACKLOG;
+        s->count--;
+        fprintf(stderr, "[ws] 백로그 초과 — 이벤트 폐기\n");
+    }
+    s->buf[s->tail] = *payload;
+    s->tail = (s->tail + 1) % MAX_BACKLOG;
+    s->count++;
+    pthread_mutex_unlock(&s->lock);
+    pthread_cond_signal(&s->not_empty);
+}
+
+void ws_send_heartbeat(WsSender *s, double uptime_sec, double cpu_pct,
+                       double rss_mb, int n_people, double infer_fps)
+{
+    if (!s->enabled) return;
+    WsPayload payload;
+    snprintf(payload.json, sizeof(payload.json),
+             "{\"type\":\"heartbeat\",\"ts\":%.3f,\"uptime_sec\":%.0f,"
+             "\"cpu_pct\":%.1f,\"rss_mb\":%.0f,\"n_people\":%d,"
+             "\"infer_fps\":%.1f}",
+             (double)time(NULL), uptime_sec, cpu_pct, rss_mb,
+             n_people, infer_fps);
+    ws_enqueue(s, &payload);
+}
+
 void ws_send_event(WsSender *s, const Event *ev)
 {
     if (!s->enabled) return;
@@ -329,18 +359,7 @@ void ws_send_event(WsSender *s, const Event *ev)
              "\"message\":\"%s\",\"meta\":{\"journey\":\"%s\"}}",
              event_kind_str(ev->kind), ev->track_id,
              (double)time(NULL), esc, esc_journey);
-
-    pthread_mutex_lock(&s->lock);
-    if (s->count >= MAX_BACKLOG) {           /* 백로그 초과 — 오래된 것 폐기 */
-        s->head = (s->head + 1) % MAX_BACKLOG;
-        s->count--;
-        fprintf(stderr, "[ws] 백로그 초과 — 이벤트 폐기\n");
-    }
-    s->buf[s->tail] = payload;
-    s->tail = (s->tail + 1) % MAX_BACKLOG;
-    s->count++;
-    pthread_mutex_unlock(&s->lock);
-    pthread_cond_signal(&s->not_empty);
+    ws_enqueue(s, &payload);
 }
 
 void ws_stop(WsSender *s)

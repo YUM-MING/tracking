@@ -142,7 +142,17 @@ build/kiosk_tracking --ws=ws://192.168.0.10:8080/events   # 서버 전송
 build/kiosk_tracking --admin-port=8765   # 점주 페이지 포트 (0 = 끔, 기본 8765)
 build/kiosk_tracking --log=pipeline.log  # 통합 로그 파일 기록 (기본 stderr만)
 build/kiosk_tracking --data-dir=data     # 파일럿 데이터 JSONL 축적 폴더 (기본 data, --data-dir= 로 끔)
+build/kiosk_tracking --privacy           # 비식별 표시 — 영상을 열화상풍으로 뭉개고 박스/뼈대만 표시
 ```
+
+운영(필드 테스트) 도구 — [필드 테스트 계획서](docs/field_test_plan.md) 참고:
+
+```
+tools/run_forever.sh --no-window ...       # 크래시 자동 재시작 + restarts.log 이력
+python3 tools/heartbeat_monitor.py --port 8080   # 수신 서버: 하트비트 3분 결손 시 알림
+```
+
+`--ws=` 설정 시 1분마다 생존 신호(uptime/CPU/RSS/인원/FPS)가 자동 전송된다.
 
 종료: 영상 창 또는 터미널에서 `q` (터미널이 실제 tty일 때만 동작).
 모델(`yolo11n-pose.onnx`)과 점주 페이지(`owner_page.html`)는 실행 파일과 같은

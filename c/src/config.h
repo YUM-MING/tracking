@@ -173,10 +173,12 @@ typedef struct {
     const char *ws_url;           /* 비우면 로컬 로그만. 예: "ws://192.168.0.10:8080/events" */
     double ws_reconnect_min_sec;
     double ws_reconnect_max_sec;
+    double heartbeat_sec;         /* 생존 신호 주기 (0 = 끔). 수신 측이 결손 시 알림 */
 
     /* ── 기타 ─────────────────────────────────────────── */
     bool show_window;
     int  display_every_n;         /* 화면 갱신 주기 (imshow 자체가 CPU를 상당히 먹는다) */
+    bool privacy_view;            /* 비식별 표시: 영상을 열화상풍으로 뭉개고 박스/뼈대만 또렷이 */
 } PipelineConfig;
 
 /* 전역 기본 설정 — config.py의 CFG = PipelineConfig() 에 해당 */
@@ -290,9 +292,11 @@ static const PipelineConfig CFG_DEFAULT = {
     .ws_url = "",
     .ws_reconnect_min_sec = 1.0,
     .ws_reconnect_max_sec = 30.0,
+    .heartbeat_sec = 60.0,        /* 필드 테스트 회의: 1분마다 생존 신호 */
 
     .show_window = true,
     .display_every_n = 2,
+    .privacy_view = false,
 };
 
 #endif /* CONFIG_H */

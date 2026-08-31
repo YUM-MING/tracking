@@ -39,6 +39,9 @@ int main(int argc, char **argv)
         ws_send_event(s, &ev);
     }
 
+    /* 하트비트 프레임도 실서버로 검증 (수신 모니터가 💓로 표시해야 함) */
+    ws_send_heartbeat(s, 123.0, 11.5, 210.0, 2, 5.8);
+
     sleep(3);   /* 워커 스레드가 연결·전송을 마칠 시간 */
     ws_stop(s);
     ws_destroy(s);
