@@ -6,12 +6,25 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <unistd.h>
 #include <pthread.h>
 
+#include "os_compat.h"
+#ifndef _WIN32
 #include <netinet/in.h>
 #include <sys/select.h>
-#include <sys/socket.h>
+#endif
+
+#ifdef _WIN32
+/* mingw에는 strcasestr가 없다 (POSIX 확장) */
+static const char *win_strcasestr(const char *h, const char *n)
+{
+    size_t nl = strlen(n);
+    for (; *h; h++)
+        if (strncasecmp(h, n, nl) == 0) return h;
+    return NULL;
+}
+#define strcasestr win_strcasestr
+#endif
 
 #include "camhealth.h"
 #include "logger.h"
@@ -44,7 +57,7 @@ struct AdminServer {
     pthread_t thread;
     bool has_thread;
     _Atomic bool stop;
-    int listen_fd;
+    sock_t listen_fd;
 
     pthread_mutex_t lock;      /* 아래 공유 스냅샷 전부 보호 */
     AdminStatus status;
@@ -113,7 +126,7 @@ void admin_push_event(AdminServer *a, const Event *ev)
     if (!a) return;
     time_t now = time(NULL);
     struct tm tm_buf;
-    localtime_r(&now, &tm_buf);
+    os_localtime(&now, &tm_buf);
 
     pthread_mutex_lock(&a->lock);
     AdminEvent *e = &a->events[a->ev_seq % EV_RING_CAP];
@@ -275,7 +288,7 @@ static void send_response(int fd, int code, const char *status,
     send(fd, hdr, (size_t)hl, 0);
     int off = 0;
     while (off < body_len) {
-        ssize_t n = send(fd, body + off, (size_t)(body_len - off), 0);
+        int n = send(fd, body + off, (size_t)(body_len - off), 0);
         if (n <= 0) return;
         off += (int)n;
     }
@@ -474,8 +487,7 @@ static void handle_request(AdminServer *a, int fd, const char *method,
 /* 요청 1건 수신·파싱 (요청 라인 + Content-Length 본문) */
 static void serve_client(AdminServer *a, int fd)
 {
-    struct timeval tmo = { .tv_sec = 2, .tv_usec = 0 };
-    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tmo, sizeof(tmo));
+    sock_set_timeout_ms((sock_t)fd, 2000);
 
     static char req[REQ_MAX];                    /* 단일 스레드 처리 전용 */
     int total = 0;
@@ -483,7 +495,7 @@ static void serve_client(AdminServer *a, int fd)
     long content_len = 0;
 
     while (total < REQ_MAX - 1) {
-        ssize_t n = recv(fd, req + total, (size_t)(REQ_MAX - 1 - total), 0);
+        int n = recv(fd, req + total, (size_t)(REQ_MAX - 1 - total), 0);
         if (n <= 0) return;
         total += (int)n;
         req[total] = 0;
@@ -513,10 +525,10 @@ static void *admin_thread_main(void *arg)
         FD_SET(a->listen_fd, &fds);
         struct timeval tv = { 0, 500 * 1000 };
         if (select(a->listen_fd + 1, &fds, NULL, NULL, &tv) <= 0) continue;
-        int fd = accept(a->listen_fd, NULL, NULL);
-        if (fd < 0) continue;
-        serve_client(a, fd);
-        close(fd);
+        sock_t cfd = accept(a->listen_fd, NULL, NULL);
+        if (cfd == SOCK_INVALID) continue;
+        serve_client(a, (int)cfd);       /* 윈도우 SOCKET 값도 int 범위 안 */
+        sock_close(cfd);
     }
     return NULL;
 }
@@ -528,7 +540,7 @@ AdminServer *admin_create(const PipelineConfig *cfg, SettingsStore *settings)
     AdminServer *a = calloc(1, sizeof(AdminServer));
     a->cfg = cfg;
     a->settings = settings;
-    a->listen_fd = -1;
+    a->listen_fd = SOCK_INVALID;
     pthread_mutex_init(&a->lock, NULL);
     return a;
 }
@@ -539,13 +551,14 @@ void admin_start(AdminServer *a)
         LOGI("점주", "admin_port=0 — 점주 페이지 비활성");
         return;
     }
-    int fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) {
+    sock_global_init();
+    sock_t fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd == SOCK_INVALID) {
         LOGE("점주", "소켓 생성 실패");
         return;
     }
     int on = 1;
-    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char *)&on, sizeof(on));
     struct sockaddr_in addr = { 0 };
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
@@ -554,7 +567,7 @@ void admin_start(AdminServer *a)
         listen(fd, 8) != 0) {
         LOGE("점주", "포트 %d 바인드 실패 (%s)", a->cfg->admin_port,
              strerror(errno));
-        close(fd);
+        sock_close(fd);
         return;
     }
     a->listen_fd = fd;
@@ -572,9 +585,9 @@ void admin_stop(AdminServer *a)
         pthread_join(a->thread, NULL);
         a->has_thread = false;
     }
-    if (a->listen_fd >= 0) {
-        close(a->listen_fd);
-        a->listen_fd = -1;
+    if (a->listen_fd != SOCK_INVALID) {
+        sock_close(a->listen_fd);
+        a->listen_fd = SOCK_INVALID;
     }
 }
 

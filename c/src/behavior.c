@@ -1,5 +1,7 @@
 #include "behavior.h"
 
+#include "os_compat.h"
+
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -190,7 +192,7 @@ static const char *time_bucket(void)
 {
     time_t now = time(NULL);
     struct tm tmv;
-    localtime_r(&now, &tmv);
+    os_localtime(&now, &tmv);
     int h = tmv.tm_hour;
     if (h < 6)  return "심야";
     if (h < 11) return "아침";

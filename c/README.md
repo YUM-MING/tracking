@@ -160,16 +160,18 @@ python3 tools/heartbeat_monitor.py --port 8080   # 수신 서버: 하트비트 3
 onnxruntime/OpenCV는 Homebrew가 설치한 dylib을 `@rpath`로 그대로 참조한다
 (별도 복사 불필요 — Windows판의 DLL 복사 단계에 해당).
 
-## 파일럿 데이터 축적 (JSONL)
+## 파일럿 데이터 축적 (SQLite + JSONL)
 
-실행 중 발생한 데이터가 `--data-dir`(기본 `data/`)에 날짜별 JSONL로 쌓인다.
-사후 분석용 기계 포맷 — pandas 등으로 바로 읽을 수 있다.
+실행 중 발생한 데이터가 `--data-dir`(기본 `data/`)에 쌓인다.
 이미지·개인정보는 저장하지 않는다 (동선 단계·시각·메시지만).
 
-| 파일 | 내용 (1줄 = 1레코드) |
+| 파일 | 내용 |
 |---|---|
-| `events_YYYY-MM-DD.jsonl` | 이벤트 1건: `ts`(유닉스), `time`, `type`, `track_id`, `message`, `journey` |
-| `journeys_YYYY-MM-DD.jsonl` | 퇴장 손님 1명: 입장/퇴장 시각, 체류 시간, 키오스크 방문·착석·결제 여부, 단계별 `steps[]` |
+| `tracking.db` | **SQLite 원본 DB (8/31 회의 채택)** — events/journeys 테이블. 파일 하나만 복사하면 전체 데이터가 그대로 보인다 |
+| `events_YYYY-MM-DD.jsonl` | 이벤트 1건 = 1줄 (grep/pandas 즉석 분석용 병행 기록) |
+| `journeys_YYYY-MM-DD.jsonl` | 퇴장 손님 1명 = 1줄: 입장/퇴장 시각, 체류 시간, 키오스크 방문·착석·결제 여부, 단계별 `steps[]` |
+
+SQLite 조회 예: `sqlite3 data/tracking.db "SELECT time,type,message FROM events ORDER BY ts DESC LIMIT 20"` 
 
 분석 예 (시간대별 방문 수, 키오스크 전환율, 평균 체류):
 
@@ -179,6 +181,22 @@ j = pd.DataFrame(json.loads(l) for l in open("data/journeys_2026-08-31.jsonl"))
 print(len(j), "명 방문 /", j.visited_kiosk.mean(), "키오스크 전환율 /",
       j.duration_sec.mean(), "초 평균 체류")
 ```
+
+## 윈도우 패키징 (필드 테스트 배포 — 8/31 회의)
+
+맥에서 윈도우용 배포 zip을 크로스 빌드로 만든다 (윈도우 PC에서는 압축 해제 후
+`START.bat` 더블클릭이 전부):
+
+```
+brew install mingw-w64
+# third_party/win/ 에 onnxruntime win-x64 zip과 ffmpeg win64 shared zip 압축 해제
+tools/package_win.sh          # → dist/kiosk_tracking_win64_날짜.zip (약 96MB)
+```
+
+- 캡처는 OpenCV 대신 FFmpeg C API(`cv_shim_ffmpeg.c`) — 웹캠(dshow)/RTSP/파일 지원
+- 윈도우판은 디버그 창 미지원(헤드리스) — 확인은 점주 페이지 오버레이로
+- 스레드는 winpthreads로 pthread 그대로, 소켓·시간·리소스 계측은 `os_compat.h`에 격리
+- 동봉물: exe + onnxruntime/FFmpeg DLL + 모델 3종 + 점주 페이지 + 자동재시작 bat + 설치 안내서
 
 ## 점주 페이지
 

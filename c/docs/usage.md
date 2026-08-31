@@ -137,7 +137,8 @@ build/kiosk_tracking [소스] [플래그...]
 
 | 파일 | 내용 |
 |---|---|
-| `data/events_YYYY-MM-DD.jsonl` | 알림 이벤트 1건 = 1줄 |
+| `data/tracking.db` | **SQLite 원본 DB** — 파일 하나 복사로 전체 인계 (`sqlite3`/pandas로 바로 조회) |
+| `data/events_YYYY-MM-DD.jsonl` | 알림 이벤트 1건 = 1줄 (병행 기록) |
 | `data/journeys_YYYY-MM-DD.jsonl` | 퇴장 손님 1명 = 1줄 (입장/퇴장 시각, 체류, 키오스크·착석·결제 여부, 단계별 동선) |
 
 **수정하려면 볼 코드**

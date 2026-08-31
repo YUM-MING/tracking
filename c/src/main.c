@@ -24,8 +24,15 @@
 #include <time.h>
 #include <unistd.h>
 #include <pthread.h>
+
+#include "os_compat.h"
+#ifdef _WIN32
+#include <conio.h>             /* _kbhit/_getch — 원조 Windows판 방식 */
+#include <io.h>
+#else
 #include <termios.h>
 #include <sys/select.h>
+#endif
 
 #include "mask.h"
 
@@ -53,8 +60,19 @@
 #include "ws_sender.h"
 #include "yolo_pose.h"
 
-/* ── 터미널 q 종료 (Windows _kbhit/_getch 대응) ──
- * cbreak 모드(ICANON/ECHO 끔, VMIN=0)로 전환해 Enter 없이 즉시 키 감지.
+/* ── 터미널 q 종료 ── */
+#ifdef _WIN32
+
+static bool enable_raw_stdin(void) { return true; }   /* _kbhit는 준비 불필요 */
+static bool stdin_has_key(void) { return _kbhit() != 0; }
+static int read_key(void) { return _getch(); }
+#define isatty _isatty
+#undef STDIN_FILENO
+#define STDIN_FILENO _fileno(stdin)
+
+#else
+
+/* cbreak 모드(ICANON/ECHO 끔, VMIN=0)로 전환해 Enter 없이 즉시 키 감지.
  * select()로 non-blocking 조회 후 read()로 1바이트만 소비한다. */
 static struct termios g_orig_termios;
 static bool g_termios_saved = false;
@@ -90,6 +108,8 @@ static int read_key(void)
     unsigned char ch;
     return read(STDIN_FILENO, &ch, 1) == 1 ? ch : -1;
 }
+
+#endif /* _WIN32 */
 
 /* ── 캡처 스레드 (생산자) ─────────────────────────────
  * 카메라에서 프레임을 읽어 framebus에 공개하는 일만 한다.
@@ -296,7 +316,7 @@ static bool within_hours(const PipelineConfig *cfg)
     if (!cfg->hours_enabled) return true;
     time_t t = time(NULL);
     struct tm tmv;
-    localtime_r(&t, &tmv);
+    os_localtime(&t, &tmv);
     int m = tmv.tm_hour * 60 + tmv.tm_min;
     if (cfg->open_min <= cfg->close_min)
         return m >= cfg->open_min && m < cfg->close_min;
@@ -461,8 +481,17 @@ int main(int argc, char **argv)
             source = argv[i];
     }
 
+#ifdef _WIN32
+    if (cfg.show_window) {
+        /* 윈도우판은 디버그 창 미지원 (ffmpeg 캡처 전용 빌드) —
+         * 실시간 확인은 점주 페이지의 인원 오버레이로 한다 */
+        fprintf(stderr, "[메인] 윈도우판은 영상 창 미지원 — 점주 페이지로 확인하세요\n");
+        cfg.show_window = false;
+    }
+#endif
+
     log_init(LOGL_INFO, cfg.log_path);
-    datastore_init(cfg.data_dir);          /* 이벤트/여정 JSONL 축적 */
+    datastore_init(cfg.data_dir);          /* 이벤트/여정 축적 (SQLite + JSONL) */
     apply_cpu_affinity(&cfg);
     apply_thread_role(THREAD_ROLE_INFER);          /* 메인 = 추론(소비자) */
 

@@ -6,6 +6,8 @@ __pycache__/
 
 # C 포팅 빌드 산출물/의존성 (c/README.md 참고)
 c/build/
+c/build-win/
+c/dist/
 c/third_party/
 
 # 로컬 전용

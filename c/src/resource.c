@@ -3,9 +3,43 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
-#include <unistd.h>
 #include <pthread.h>
 
+#ifdef _WIN32
+/* ── Windows: GetProcessTimes/GetSystemTimes/psapi 기반 ── */
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <psapi.h>
+
+void apply_cpu_affinity(const PipelineConfig *cfg)
+{
+    if (cfg->cpu_affinity_mask == 0) return;
+    if (SetProcessAffinityMask(GetCurrentProcess(),
+                               (DWORD_PTR)cfg->cpu_affinity_mask))
+        fprintf(stderr, "[리소스] CPU affinity 적용: 0x%llx\n",
+                cfg->cpu_affinity_mask);
+    else
+        fprintf(stderr, "[리소스] CPU affinity 적용 실패\n");
+}
+
+/* Windows: 스레드 우선순위로 역할 배치 (8/9 스레드 분배의 Win 구현) */
+void apply_thread_role(ThreadRole role)
+{
+    int prio;
+    switch (role) {
+    case THREAD_ROLE_CAPTURE: prio = THREAD_PRIORITY_ABOVE_NORMAL; break;
+    case THREAD_ROLE_INFER:   prio = THREAD_PRIORITY_NORMAL;       break;
+    case THREAD_ROLE_IO:      prio = THREAD_PRIORITY_BELOW_NORMAL; break;
+    default:                  prio = THREAD_PRIORITY_LOWEST;       break;
+    }
+    SetThreadPriority(GetCurrentThread(), prio);
+}
+
+#else /* macOS */
+
+#include <unistd.h>
 #include <sys/resource.h>
 #include <mach/mach.h>
 #include <mach/mach_host.h>
@@ -31,6 +65,8 @@ void apply_thread_role(ThreadRole role)
     pthread_set_qos_class_self_np(qos, 0);
 }
 
+#endif /* _WIN32 */
+
 struct ResourceMonitor {
     const PipelineConfig *cfg;
     pthread_t thread;
@@ -51,6 +87,52 @@ static double mono_seconds(void)
     clock_gettime(CLOCK_MONOTONIC, &t);
     return (double)t.tv_sec + (double)t.tv_nsec / 1e9;
 }
+
+#ifdef _WIN32
+
+static double filetime_sec(const FILETIME *ft)
+{
+    ULARGE_INTEGER v;
+    v.LowPart = ft->dwLowDateTime;
+    v.HighPart = ft->dwHighDateTime;
+    return (double)v.QuadPart / 1e7;             /* 100ns 단위 → 초 */
+}
+
+/* 프로세스 누적 CPU 시간(초, user+system) */
+static double proc_cpu_seconds(void)
+{
+    FILETIME c, e, k, u;
+    if (!GetProcessTimes(GetCurrentProcess(), &c, &e, &k, &u)) return 0;
+    return filetime_sec(&k) + filetime_sec(&u);
+}
+
+/* 프로세스 RSS(MB) */
+static double proc_rss_mb(void)
+{
+    PROCESS_MEMORY_COUNTERS pmc;
+    if (!GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc)))
+        return 0;
+    return (double)pmc.WorkingSetSize / (1024.0 * 1024.0);
+}
+
+/* 기기 전체 CPU 틱(비유휴/전체) */
+static void host_cpu_ticks(unsigned long long *busy, unsigned long long *total)
+{
+    FILETIME idle, kernel, user;
+    if (!GetSystemTimes(&idle, &kernel, &user)) {
+        *busy = 0; *total = 0;
+        return;
+    }
+    ULARGE_INTEGER i, k, u;
+    i.LowPart = idle.dwLowDateTime;   i.HighPart = idle.dwHighDateTime;
+    k.LowPart = kernel.dwLowDateTime; k.HighPart = kernel.dwHighDateTime;
+    u.LowPart = user.dwLowDateTime;   u.HighPart = user.dwHighDateTime;
+    /* kernel에는 idle이 포함되어 있다 */
+    *total = k.QuadPart + u.QuadPart;
+    *busy = *total - i.QuadPart;
+}
+
+#else /* macOS */
 
 /* 프로세스 누적 CPU 시간(초, user+system) — GetProcessTimes 대응 */
 static double proc_cpu_seconds(void)
@@ -89,6 +171,8 @@ static void host_cpu_ticks(unsigned long long *busy, unsigned long long *total)
     *busy = user + sys + nice;
     *total = *busy + idle;
 }
+
+#endif /* _WIN32 */
 
 static void *monitor_main(void *arg)
 {
@@ -158,8 +242,14 @@ ResourceMonitor *monitor_create(const PipelineConfig *cfg)
     m->cfg = cfg;
     pthread_mutex_init(&m->lock, NULL);
     pthread_cond_init(&m->cond, NULL);
+#ifdef _WIN32
+    SYSTEM_INFO si;
+    GetSystemInfo(&si);
+    m->n_cores = si.dwNumberOfProcessors > 0 ? (int)si.dwNumberOfProcessors : 1;
+#else
     long n = sysconf(_SC_NPROCESSORS_ONLN);
     m->n_cores = n > 0 ? (int)n : 1;
+#endif
     return m;
 }
 

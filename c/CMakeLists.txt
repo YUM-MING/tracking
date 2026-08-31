@@ -15,14 +15,15 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-# Homebrew 패키지 검색 경로 (Apple Silicon 기본 prefix. Intel Mac이면
-# /usr/local 도 CMAKE_PREFIX_PATH에 자동 포함되도록 brew --prefix 사용)
-execute_process(COMMAND brew --prefix OUTPUT_VARIABLE HOMEBREW_PREFIX
-                 OUTPUT_STRIP_TRAILING_WHITESPACE)
-list(APPEND CMAKE_PREFIX_PATH ${HOMEBREW_PREFIX})
-
-find_package(onnxruntime REQUIRED)
-find_package(OpenCV REQUIRED)
+if(NOT WIN32)
+    # Homebrew 패키지 검색 경로 (Apple Silicon 기본 prefix. Intel Mac이면
+    # /usr/local 도 CMAKE_PREFIX_PATH에 자동 포함되도록 brew --prefix 사용)
+    execute_process(COMMAND brew --prefix OUTPUT_VARIABLE HOMEBREW_PREFIX
+                     OUTPUT_STRIP_TRAILING_WHITESPACE)
+    list(APPEND CMAKE_PREFIX_PATH ${HOMEBREW_PREFIX})
+    find_package(onnxruntime REQUIRED)
+    find_package(OpenCV REQUIRED)
+endif()
 find_package(Threads REQUIRED)
 
 set(CORE_SOURCES
@@ -38,7 +39,8 @@ set(CORE_SOURCES
     src/resource.c
     src/logger.c        # 통합 로깅 (8/10 회의 ④)
     src/journey.c       # 설명 가능한 동선 기록 (8/18 회의 ①)
-    src/datastore.c     # 파일럿 데이터 JSONL 축적 (이벤트/여정 — 사후 분석용)
+    src/datastore.c     # 파일럿 데이터 축적 — SQLite + JSONL (8/31 회의)
+    src/sqlite3.c       # SQLite 동봉 (공용 도메인 아말가메이션)
     src/camhealth.c     # 카메라 자가 진단 (8/18 회의 ②)
     src/framebus.c      # lock-free 프레임 버스 (8/9 최적화 계획)
     src/store_settings.c # 점주 설정 영속화 + 오탐 피드백 캘리브레이션
@@ -48,20 +50,43 @@ set(CORE_SOURCES
     src/behavior.c      # 제로샷 이상행동 — 폭력/파손/낙상/배회/무단조작
 )
 
-add_executable(kiosk_tracking
-    src/main.c
-    ${CORE_SOURCES}
-    src/cv_shim.cpp        # OpenCV 격리 계층 — 유일한 C++ 파일
-)
-target_include_directories(kiosk_tracking PRIVATE
-    ${OpenCV_INCLUDE_DIRS}
-)
-target_link_libraries(kiosk_tracking PRIVATE
-    onnxruntime::onnxruntime
-    ${OpenCV_LIBS}
-    Threads::Threads
-)
+if(WIN32)
+    # ── 윈도우 패키징 빌드 (mingw-w64 크로스, 8/31 회의) ──
+    # 캡처는 OpenCV 대신 FFmpeg C API. 의존 바이너리는 third_party/win에
+    # 내려받아 둔다 (README의 패키징 절차 참고).
+    set(ORT_WIN ${CMAKE_CURRENT_SOURCE_DIR}/third_party/win/onnxruntime-win-x64-1.27.1)
+    set(FFMPEG_WIN ${CMAKE_CURRENT_SOURCE_DIR}/third_party/win/ffmpeg-master-latest-win64-lgpl-shared)
+    add_executable(kiosk_tracking
+        src/main.c
+        ${CORE_SOURCES}
+        src/cv_shim_ffmpeg.c   # FFmpeg 캡처 (창 미지원 — 헤드리스)
+    )
+    target_include_directories(kiosk_tracking PRIVATE
+        ${ORT_WIN}/include ${FFMPEG_WIN}/include)
+    target_link_directories(kiosk_tracking PRIVATE
+        ${ORT_WIN}/lib ${FFMPEG_WIN}/lib)
+    target_link_libraries(kiosk_tracking PRIVATE
+        onnxruntime avdevice avformat avcodec avutil swscale
+        ws2_32 psapi Threads::Threads)
+    # gcc 런타임·winpthread를 정적 링크 — DLL 동봉 목록 최소화
+    target_link_options(kiosk_tracking PRIVATE -static)
+else()
+    add_executable(kiosk_tracking
+        src/main.c
+        ${CORE_SOURCES}
+        src/cv_shim.cpp        # OpenCV 격리 계층 — 유일한 C++ 파일
+    )
+    target_include_directories(kiosk_tracking PRIVATE
+        ${OpenCV_INCLUDE_DIRS}
+    )
+    target_link_libraries(kiosk_tracking PRIVATE
+        onnxruntime::onnxruntime
+        ${OpenCV_LIBS}
+        Threads::Threads
+    )
+endif()
 
+if(NOT WIN32)
 # 검출 파리티 테스트 도구 (파이썬 ultralytics 결과와 비교 검증용)
 add_executable(test_detect
     src/test_detect.c
@@ -89,6 +114,7 @@ add_executable(test_logic
     src/logger.c
     src/journey.c
     src/datastore.c
+    src/sqlite3.c
     src/camhealth.c
     src/framebus.c
     src/store_settings.c
@@ -104,9 +130,11 @@ add_executable(test_ws
     src/logger.c
     src/journey.c
     src/datastore.c
+    src/sqlite3.c
     src/resource.c
 )
 target_link_libraries(test_ws PRIVATE Threads::Threads)
+endif()
 
 # 실행에 필요한 모델을 출력 폴더로 복사 (동적 라이브러리는 @rpath로 참조되므로 복사 불필요)
 # yolo11n.onnx(반려동물/외부음식)와 genderage.onnx(노키즈존)는 없어도 빌드/실행 가능

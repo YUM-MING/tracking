@@ -6,6 +6,8 @@
 #include <time.h>
 #include <pthread.h>
 
+#include "os_compat.h"
+
 #define LOG_RING_CAP 128       /* 점주 페이지에서 열람 가능한 최근 로그 수 */
 #define LOG_LINE_MAX 240
 
@@ -68,7 +70,7 @@ void log_msg(LogLevel lv, const char *tag, const char *fmt, ...)
 
     time_t now = time(NULL);
     struct tm tm_buf;
-    localtime_r(&now, &tm_buf);
+    os_localtime(&now, &tm_buf);
     char ts[16];
     strftime(ts, sizeof(ts), "%H:%M:%S", &tm_buf);
     /* 파일 로그에는 날짜 포함 (여러 날 파일럿 시 며칠째인지 구분) */

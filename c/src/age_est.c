@@ -9,6 +9,15 @@
 #include "logger.h"
 #include "onnxruntime_c_api.h"
 
+/* 윈도우 ORT는 모델 경로가 wchar_t(ORTCHAR_T) — ASCII 파일명 전제 단순 변환 */
+#ifdef _WIN32
+#define ORT_PATH_DECL(var, utf8) \
+    ORTCHAR_T var[512]; mbstowcs(var, (utf8), 512)
+#else
+#define ORT_PATH_DECL(var, utf8) const char *var = (utf8)
+#endif
+
+
 #define AGE_INPUT 96           /* genderage.onnx 고정 입력 크기 */
 
 struct AgeEst {
@@ -54,7 +63,8 @@ AgeEst *age_create(const PipelineConfig *cfg)
     ort->SetInterOpNumThreads(a->opts, 1);
     ort->SetSessionGraphOptimizationLevel(a->opts, ORT_ENABLE_ALL);
 
-    if (!ort_ok(ort, ort->CreateSession(a->env, cfg->age_model, a->opts, &a->session),
+    ORT_PATH_DECL(model_path, cfg->age_model);
+    if (!ort_ok(ort, ort->CreateSession(a->env, model_path, a->opts, &a->session),
                 "CreateSession")) goto fail;
     if (!ort_ok(ort, ort->GetAllocatorWithDefaultOptions(&a->allocator),
                 "GetAllocator")) goto fail;

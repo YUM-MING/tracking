@@ -7,6 +7,7 @@
 
 #include "datastore.h"
 #include "logger.h"
+#include "os_compat.h"
 
 #define JOURNEY_TRACKS 128     /* 동시 추적 동선 상한 (정적 할당) */
 #define JOURNEY_STEPS  16      /* 트랙당 기록 단계 상한 (초과 시 마지막 갱신) */
@@ -135,7 +136,7 @@ static void format_ts(const Journey *j, double mono_ts, char *out, size_t len)
 {
     time_t wall = (time_t)(mono_ts + j->wall_offset);
     struct tm tm_buf;
-    localtime_r(&wall, &tm_buf);
+    os_localtime(&wall, &tm_buf);
     strftime(out, len, "%H:%M:%S", &tm_buf);
 }
 
@@ -154,7 +155,7 @@ void journey_format(const Journey *j, int track_id, char *buf, size_t len)
     }
 }
 
-/* 퇴장 트랙 1명 = JSONL 1줄. 시간대별 방문·전환율 분석용 여정 레코드. */
+/* 퇴장 트랙 1명 = 레코드 1건 (SQLite + JSONL). 방문·전환율 분석용. */
 static void journey_store_record(const Journey *j, const TrackJourney *t)
 {
     if (!datastore_enabled() || t->n_steps == 0) return;
@@ -163,7 +164,7 @@ static void journey_store_record(const Journey *j, const TrackJourney *t)
     double exit_ts = t->steps[t->n_steps - 1].ts + j->wall_offset;
     time_t enter_wall = (time_t)enter_ts;
     struct tm tm_buf;
-    localtime_r(&enter_wall, &tm_buf);
+    os_localtime(&enter_wall, &tm_buf);
     char enter_str[24];
     strftime(enter_str, sizeof(enter_str), "%Y-%m-%d %H:%M:%S", &tm_buf);
 
@@ -174,25 +175,20 @@ static void journey_store_record(const Journey *j, const TrackJourney *t)
         if (t->steps[i].step == STEP_PURCHASE) purchased = true;
     }
 
-    char line[1024];
+    char steps[768];
     size_t o = 0;
-    o += (size_t)snprintf(line + o, sizeof(line) - o,
-        "{\"track_id\":%d,\"enter\":\"%s\",\"enter_ts\":%.3f,\"exit_ts\":%.3f,"
-        "\"duration_sec\":%.1f,\"visited_kiosk\":%s,\"sat\":%s,\"purchased\":%s,"
-        "\"steps\":[",
-        t->track_id, enter_str, enter_ts, exit_ts, exit_ts - enter_ts,
-        kiosk ? "true" : "false", sat ? "true" : "false",
-        purchased ? "true" : "false");
-    for (int i = 0; i < t->n_steps && o + 64 < sizeof(line); i++) {
+    o += (size_t)snprintf(steps + o, sizeof(steps) - o, "[");
+    for (int i = 0; i < t->n_steps && o + 64 < sizeof(steps); i++) {
         char hms[16];
         format_ts(j, t->steps[i].ts, hms, sizeof(hms));
-        o += (size_t)snprintf(line + o, sizeof(line) - o,
+        o += (size_t)snprintf(steps + o, sizeof(steps) - o,
                               "%s{\"step\":\"%s\",\"ts\":%.3f,\"time\":\"%s\"}",
                               i ? "," : "", STEP_KEY[t->steps[i].step],
                               t->steps[i].ts + j->wall_offset, hms);
     }
-    snprintf(line + o, sizeof(line) - o, "]}");
-    datastore_append(DS_JOURNEYS, line);
+    snprintf(steps + o, sizeof(steps) - o, "]");
+    datastore_journey(t->track_id, enter_str, enter_ts, exit_ts,
+                      kiosk, sat, purchased, steps);
 }
 
 void journey_gc(Journey *j, double now, double ttl)

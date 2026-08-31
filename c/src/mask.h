@@ -14,8 +14,8 @@
  *
  * 순수 인라인 헤더 (정적 할당, 라이브러리 없음 — 8/7 회의 자료구조 원칙).
  */
-#ifndef MASK_H
-#define MASK_H
+#ifndef MASK_H_INCLUDED
+#define MASK_H_INCLUDED
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -92,4 +92,4 @@ static inline bool mask_from_hex(const char *hex, uint8_t *mask)
     return true;
 }
 
-#endif /* MASK_H */
+#endif /* MASK_H_INCLUDED */

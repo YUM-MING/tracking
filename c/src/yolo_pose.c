@@ -8,6 +8,15 @@
 #include "imgproc.h"
 #include "onnxruntime_c_api.h"
 
+/* 윈도우 ORT는 모델 경로가 wchar_t(ORTCHAR_T) — ASCII 파일명 전제 단순 변환 */
+#ifdef _WIN32
+#define ORT_PATH_DECL(var, utf8) \
+    ORTCHAR_T var[512]; mbstowcs(var, (utf8), 512)
+#else
+#define ORT_PATH_DECL(var, utf8) const char *var = (utf8)
+#endif
+
+
 /* 출력 텐서 레이아웃: (1, 56, N)  — 56 = cx,cy,w,h + conf + 17*(x,y,conf) */
 #define OUT_CHANNELS 56
 
@@ -55,7 +64,8 @@ YoloPose *yolo_create(const PipelineConfig *cfg)
     ort->SetInterOpNumThreads(y->opts, 1);
     ort->SetSessionGraphOptimizationLevel(y->opts, ORT_ENABLE_ALL);
 
-    if (!ort_ok(ort, ort->CreateSession(y->env, cfg->yolo_model, y->opts, &y->session),
+    ORT_PATH_DECL(model_path, cfg->yolo_model);
+    if (!ort_ok(ort, ort->CreateSession(y->env, model_path, y->opts, &y->session),
                 "CreateSession(모델 로드)"))
         goto fail;
 

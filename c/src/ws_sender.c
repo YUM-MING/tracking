@@ -4,19 +4,20 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <unistd.h>
 #include <pthread.h>
 
-#include <sys/socket.h>
+#include "os_compat.h"
+#ifndef _WIN32
 #include <sys/types.h>
 #include <netinet/in.h>
 #include <netdb.h>
-#include <unistd.h>
+#endif
 
 #include "resource.h"
 
-typedef int SOCKET;
-#define INVALID_SOCKET (-1)
+#ifdef _WIN32
+#include <unistd.h>            /* mingw-w64: usleep */
+#endif
 
 #define MAX_BACKLOG 500        /* 서버 장기 다운 시 오래된 이벤트부터 폐기 */
 
@@ -37,7 +38,7 @@ struct WsSender {
 
     pthread_t thread;
     bool has_thread;
-    SOCKET sock;
+    sock_t sock;
     double backoff;
 };
 
@@ -91,7 +92,7 @@ static void base64_16(const unsigned char *in, char *out /* 25바이트 이상 *
 }
 
 /* ── RFC 6455 클라이언트 핸드셰이크 ── */
-static bool ws_handshake(SOCKET s, const char *host, const char *port, const char *path)
+static bool ws_handshake(sock_t s, const char *host, const char *port, const char *path)
 {
     unsigned char key_raw[16];
     for (int i = 0; i < 16; i++) key_raw[i] = (unsigned char)(rand() & 0xFF);
@@ -124,7 +125,7 @@ static bool ws_handshake(SOCKET s, const char *host, const char *port, const cha
 }
 
 /* ── 마스킹된 텍스트 프레임 전송 ── */
-static bool ws_send_text(SOCKET s, const char *text)
+static bool ws_send_text(sock_t s, const char *text)
 {
     size_t len = strlen(text);
     unsigned char hdr[14];
@@ -161,9 +162,9 @@ static bool ws_send_text(SOCKET s, const char *text)
 
 static void ws_close_sock(WsSender *s)
 {
-    if (s->sock != INVALID_SOCKET) {
-        close(s->sock);
-        s->sock = INVALID_SOCKET;
+    if (s->sock != SOCK_INVALID) {
+        sock_close(s->sock);
+        s->sock = SOCK_INVALID;
     }
 }
 
@@ -183,17 +184,15 @@ static bool ws_connect(WsSender *s)
     hints.ai_socktype = SOCK_STREAM;
     bool ok = false;
     if (getaddrinfo(host, port, &hints, &ai) == 0) {
-        SOCKET sock = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
-        if (sock != INVALID_SOCKET) {
-            struct timeval tmo = { .tv_sec = 5, .tv_usec = 0 };
-            setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tmo, sizeof(tmo));
-            setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tmo, sizeof(tmo));
+        sock_t sock = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+        if (sock != SOCK_INVALID) {
+            sock_set_timeout_ms(sock, 5000);
             if (connect(sock, ai->ai_addr, ai->ai_addrlen) == 0 &&
                 ws_handshake(sock, host, port, path)) {
                 s->sock = sock;
                 ok = true;
             } else {
-                close(sock);
+                sock_close(sock);
             }
         }
         freeaddrinfo(ai);
@@ -259,7 +258,7 @@ static void *ws_thread_main(void *arg)
             pthread_mutex_unlock(&s->lock);
             if (closed) break;
 
-            if (s->sock == INVALID_SOCKET && !ws_connect(s)) continue;
+            if (s->sock == SOCK_INVALID && !ws_connect(s)) continue;
             if (ws_send_text(s->sock, payload.json)) break;
             fprintf(stderr, "[ws] 전송 실패 — 재연결 후 재시도\n");
             ws_close_sock(s);
@@ -276,8 +275,9 @@ WsSender *ws_create(const PipelineConfig *cfg)
 {
     WsSender *s = calloc(1, sizeof(WsSender));
     s->cfg = cfg;
-    s->sock = INVALID_SOCKET;
+    s->sock = SOCK_INVALID;
     s->backoff = cfg->ws_reconnect_min_sec;
+    sock_global_init();
     s->enabled = cfg->ws_url && cfg->ws_url[0];
     pthread_mutex_init(&s->lock, NULL);
     pthread_cond_init(&s->not_empty, NULL);

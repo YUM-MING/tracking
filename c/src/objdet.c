@@ -9,6 +9,15 @@
 #include "logger.h"
 #include "onnxruntime_c_api.h"
 
+/* 윈도우 ORT는 모델 경로가 wchar_t(ORTCHAR_T) — ASCII 파일명 전제 단순 변환 */
+#ifdef _WIN32
+#define ORT_PATH_DECL(var, utf8) \
+    ORTCHAR_T var[512]; mbstowcs(var, (utf8), 512)
+#else
+#define ORT_PATH_DECL(var, utf8) const char *var = (utf8)
+#endif
+
+
 /* COCO 검출 모델 출력: (1, 84, N) — 4 box + 80 클래스 점수 */
 #define OUT_CHANNELS 84
 #define NMS_IOU 0.55f
@@ -100,7 +109,8 @@ ObjDet *objdet_create(const PipelineConfig *cfg)
     ort->SetInterOpNumThreads(d->opts, 1);
     ort->SetSessionGraphOptimizationLevel(d->opts, ORT_ENABLE_ALL);
 
-    if (!ort_ok(ort, ort->CreateSession(d->env, cfg->obj_model, d->opts, &d->session),
+    ORT_PATH_DECL(model_path, cfg->obj_model);
+    if (!ort_ok(ort, ort->CreateSession(d->env, model_path, d->opts, &d->session),
                 "CreateSession")) goto fail;
     if (!ort_ok(ort, ort->GetAllocatorWithDefaultOptions(&d->allocator),
                 "GetAllocator")) goto fail;
