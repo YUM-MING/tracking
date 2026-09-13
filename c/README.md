@@ -190,13 +190,16 @@ print(len(j), "명 방문 /", j.visited_kiosk.mean(), "키오스크 전환율 /"
 ```
 brew install mingw-w64
 # third_party/win/ 에 onnxruntime win-x64 zip과 ffmpeg win64 shared zip 압축 해제
-tools/package_win.sh          # → dist/kiosk_tracking_win64_날짜.zip (약 96MB)
+tools/package_win.sh          # → zip(포터블) + setup.exe(설치형, NSIS) 동시 생성
 ```
 
 - 캡처는 OpenCV 대신 FFmpeg C API(`cv_shim_ffmpeg.c`) — 웹캠(dshow)/RTSP/파일 지원
 - 윈도우판은 디버그 창 미지원(헤드리스) — 확인은 점주 페이지 오버레이로
 - 스레드는 winpthreads로 pthread 그대로, 소켓·시간·리소스 계측은 `os_compat.h`에 격리
-- 동봉물: exe + onnxruntime/FFmpeg DLL + 모델 3종 + 점주 페이지 + 자동재시작 bat + 설치 안내서
+- 동봉물: exe + onnxruntime/FFmpeg DLL + **MSVC 런타임(vcruntime140·msvcp140 계열)** +
+  모델 3종 + 점주 페이지 + 자동재시작 bat + 설치 안내서 — 풀릴리즈(클린 PC에서 무설치 실행)
+- 설치형: `win_pkg/installer.nsi` (NSIS) — 사용자 폴더 설치라 관리자 권한 불필요,
+  바로가기·제거 프로그램 등록, 제거 시 수집 데이터 보존
 
 ## 점주 페이지
 
