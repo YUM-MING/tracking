@@ -121,6 +121,8 @@ typedef struct {
     _Atomic bool stop;
     _Atomic bool eof;          /* 파일 재생 종료 등 — 소비자에게 종료 전파 */
     _Atomic bool low_power;    /* 영업시간 외: 2초 1프레임 (발열 보호) */
+    _Atomic int skip;          /* N프레임당 1장만 변환·게시 (디코딩 다이어트,
+                                  9/22 회의 리소스 감축). 1 = 전 프레임 게시 */
 } CaptureCtx;
 
 static void *capture_main(void *arg)
@@ -137,16 +139,31 @@ static void *capture_main(void *arg)
     LOGI("캡처", "카메라 스트리밍 시작: %s", c->source);
 
     int fail_streak = 0;
+    long src_idx = 0;
     while (!atomic_load(&c->stop)) {
-        uint8_t *data;
-        int w, h, stride;
-        if (cvs_read(cap, &data, &w, &h, &stride)) {
-            fail_streak = 0;
-            framebus_publish(c->bus, data, w, h, stride);
-            /* 영업시간 외 저전력: 프레임 사이를 크게 띄워 카메라 ISP·엣지 CPU
-             * 발열을 낮춘다. 하트비트 프레임은 유지 → 야간에도 자가 진단 동작. */
-            if (atomic_load(&c->low_power)) usleep(2000 * 1000);
-            continue;
+        /* 디코딩 다이어트: 추론이 쓰지 않을 프레임은 소비(grab)만 하고
+         * 색 변환·버퍼 복사를 생략한다. 30fps 입력에 추론 6회/초면
+         * 변환 작업의 80%가 버려질 프레임이었다 — 판정 품질 손실 0. */
+        int skip = atomic_load(&c->skip);
+        if (skip < 1) skip = 1;
+        src_idx++;
+        if (src_idx % skip != 0) {
+            if (cvs_grab(cap)) {
+                fail_streak = 0;
+                if (atomic_load(&c->low_power)) usleep(2000 * 1000);
+                continue;
+            }
+        } else {
+            uint8_t *data;
+            int w, h, stride;
+            if (cvs_read(cap, &data, &w, &h, &stride)) {
+                fail_streak = 0;
+                framebus_publish(c->bus, data, w, h, stride);
+                /* 영업시간 외 저전력: 프레임 사이를 크게 띄워 카메라 ISP·엣지
+                 * CPU 발열을 낮춘다. 하트비트 프레임 유지 → 야간 자가 진단 동작. */
+                if (atomic_load(&c->low_power)) usleep(2000 * 1000);
+                continue;
+            }
         }
         /* 읽기 실패: 순간 끊김(스트림)일 수도, 파일 끝일 수도 있다 */
         fail_streak++;
@@ -477,6 +494,12 @@ int main(int argc, char **argv)
             cfg.data_dir = argv[i] + 11;   /* 빈 값(--data-dir=)이면 축적 끔 */
         else if (strcmp(argv[i], "--privacy") == 0)
             cfg.privacy_view = true;       /* 열화상풍 비식별 표시 (현장 데모용) */
+        else if (strncmp(argv[i], "--imgsz=", 8) == 0) {
+            /* 전역 추론 해상도 A/B 테스트용 (예: 416→320, 연산 약 40% 감소).
+             * 32의 배수로 내림 — letterbox 제약 */
+            int v = atoi(argv[i] + 8) / 32 * 32;
+            if (v >= 160) cfg.yolo_imgsz = v;
+        }
         else
             source = argv[i];
     }
@@ -549,6 +572,7 @@ int main(int argc, char **argv)
     CaptureCtx cap_ctx = { .cfg = &cfg, .source = source, .bus = bus };
     atomic_init(&cap_ctx.stop, false);
     atomic_init(&cap_ctx.eof, false);
+    atomic_init(&cap_ctx.skip, 1);
     pthread_t cap_thread;
     if (pthread_create(&cap_thread, NULL, capture_main, &cap_ctx) != 0) {
         LOGE("메인", "캡처 스레드 생성 실패");
@@ -702,8 +726,14 @@ int main(int argc, char **argv)
         }
         int every_n = cfg.detect_every_n * (eco_active ? 4 : 1);
 
-        /* ── 프레임 샘플링: N프레임마다 1회만 추론 (CPU 예산 보호) ── */
-        if (frame_idx % every_n == 0) {
+        /* ── 프레임 샘플링: N프레임마다 1회만 추론 (CPU 예산 보호) ──
+         * 창 없는 운영 모드는 샘플링을 캡처단(skip)으로 내려 버려질 프레임의
+         * 변환·복사 비용까지 제거하고, 게시된 프레임은 전부 추론한다.
+         * 창 모드(개발)는 화면 갱신을 위해 전 프레임 게시 후 여기서 선별. */
+        bool capture_samples = !cfg.show_window;
+        atomic_store(&cap_ctx.skip, capture_samples ? every_n : 1);
+        int consume_every = capture_samples ? 1 : every_n;
+        if (frame_idx % consume_every == 0) {
             now = mono_now();
 
             /* 카메라 자가 진단 (성긴 샘플링 — 백화/블랙아웃/초점 상실) */

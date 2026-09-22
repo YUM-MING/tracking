@@ -7,6 +7,7 @@
 
 #include "imgproc.h"
 #include "onnxruntime_c_api.h"
+#include "ort_cache.h"
 
 /* 윈도우 ORT는 모델 경로가 wchar_t(ORTCHAR_T) — ASCII 파일명 전제 단순 변환 */
 #ifdef _WIN32
@@ -62,9 +63,22 @@ YoloPose *yolo_create(const PipelineConfig *cfg)
     /* 리소스 가드: torch.set_num_threads 에 해당 — 코어 점유 상한 */
     ort->SetIntraOpNumThreads(y->opts, cfg->max_threads);
     ort->SetInterOpNumThreads(y->opts, 1);
-    ort->SetSessionGraphOptimizationLevel(y->opts, ORT_ENABLE_ALL);
 
-    ORT_PATH_DECL(model_path, cfg->yolo_model);
+    /* 최적화 그래프 캐시: 첫 실행에 저장, 이후 재최적화 없이 로드
+     * (시작 시 CPU 스파이크 감소 — 9/22 회의) */
+    char cache_path[512];
+    bool cached = ort_opt_cache_fresh(cfg->yolo_model, cache_path,
+                                      sizeof(cache_path));
+    if (cached) {
+        ort->SetSessionGraphOptimizationLevel(y->opts, ORT_DISABLE_ALL);
+        fprintf(stderr, "[yolo] 최적화 캐시 로드: %s\n", cache_path);
+    } else {
+        ort->SetSessionGraphOptimizationLevel(y->opts, ORT_ENABLE_ALL);
+        ORT_PATH_DECL(cache_w, cache_path);
+        ort->SetOptimizedModelFilePath(y->opts, cache_w);
+    }
+
+    ORT_PATH_DECL(model_path, cached ? cache_path : cfg->yolo_model);
     if (!ort_ok(ort, ort->CreateSession(y->env, model_path, y->opts, &y->session),
                 "CreateSession(모델 로드)"))
         goto fail;

@@ -143,7 +143,15 @@ build/kiosk_tracking --admin-port=8765   # 점주 페이지 포트 (0 = 끔, 기
 build/kiosk_tracking --log=pipeline.log  # 통합 로그 파일 기록 (기본 stderr만)
 build/kiosk_tracking --data-dir=data     # 파일럿 데이터 JSONL 축적 폴더 (기본 data, --data-dir= 로 끔)
 build/kiosk_tracking --privacy           # 비식별 표시 — 영상을 열화상풍으로 뭉개고 박스/뼈대만 표시
+build/kiosk_tracking --imgsz=320         # 전역 추론 해상도 A/B (기본 416 — 320이면 연산 약 40%↓)
 ```
+
+리소스 절감 구조 (9/22 회의 "합산 20~30% 목표" 대응):
+- **디코딩 다이어트**: 헤드리스(`--no-window`) 운영 시 추론에 쓸 프레임만 색 변환·게시
+  (30fps 입력·초당 6추론 기준 변환 작업 80% 제거, 판정 품질 무손실)
+- **시작 스파이크 제거**: ONNX 그래프 최적화 결과를 `<모델>.opt.onnx`로 캐싱 —
+  최초 1회만 최적화하고 이후 기동은 즉시 로드 (실측 5.4초 → 0.9초)
+- 분석 주기(점주 페이지 슬라이더)·`--imgsz`·절전/영업시간 모드로 추가 조절
 
 운영(필드 테스트) 도구 — [필드 테스트 계획서](docs/field_test_plan.md) 참고:
 

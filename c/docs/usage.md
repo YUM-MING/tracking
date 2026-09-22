@@ -61,6 +61,7 @@ build/kiosk_tracking [소스] [플래그...]
 | `--log=pipeline.log` | 통합 로그를 파일에도 기록 | stderr만 |
 | `--data-dir=data` | 파일럿 데이터 JSONL 축적 폴더 (`--data-dir=` 빈 값 = 끔) | `data/` |
 | `--privacy` | 비식별 표시 — 영상을 열화상풍으로 뭉개고 박스/뼈대만 또렷이 (현장 데모용) | 끔 |
+| `--imgsz=320` | 전역 추론 해상도 (32 배수) — 리소스/검출률 A/B 테스트용 | 416 |
 
 플래그 파싱은 `src/main.c`의 `main()` 앞부분에 있다 — 플래그를 추가하려면 여기.
 

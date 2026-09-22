@@ -46,6 +46,12 @@ int cvs_read(CvsCapture *c, uint8_t **data, int *w, int *h, int *stride)
     return 1;
 }
 
+int cvs_grab(CvsCapture *c)
+{
+    /* grab()은 디코딩·스트림 전진만 하고 BGR 변환(retrieve)은 생략한다 */
+    return c->cap.grab() ? 1 : 0;
+}
+
 void cvs_close(CvsCapture *c)
 {
     if (!c) return;

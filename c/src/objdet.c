@@ -8,6 +8,7 @@
 #include "imgproc.h"
 #include "logger.h"
 #include "onnxruntime_c_api.h"
+#include "ort_cache.h"
 
 /* 윈도우 ORT는 모델 경로가 wchar_t(ORTCHAR_T) — ASCII 파일명 전제 단순 변환 */
 #ifdef _WIN32
@@ -107,9 +108,20 @@ ObjDet *objdet_create(const PipelineConfig *cfg)
     /* 주 모델(사람 pose)과 코어를 다투지 않도록 1스레드로 제한 */
     ort->SetIntraOpNumThreads(d->opts, 1);
     ort->SetInterOpNumThreads(d->opts, 1);
-    ort->SetSessionGraphOptimizationLevel(d->opts, ORT_ENABLE_ALL);
 
-    ORT_PATH_DECL(model_path, cfg->obj_model);
+    /* 최적화 그래프 캐시 (시작 스파이크 감소 — yolo_pose.c와 동일 방식) */
+    char cache_path[512];
+    bool cached = ort_opt_cache_fresh(cfg->obj_model, cache_path,
+                                      sizeof(cache_path));
+    if (cached) {
+        ort->SetSessionGraphOptimizationLevel(d->opts, ORT_DISABLE_ALL);
+    } else {
+        ort->SetSessionGraphOptimizationLevel(d->opts, ORT_ENABLE_ALL);
+        ORT_PATH_DECL(cache_w, cache_path);
+        ort->SetOptimizedModelFilePath(d->opts, cache_w);
+    }
+
+    ORT_PATH_DECL(model_path, cached ? cache_path : cfg->obj_model);
     if (!ort_ok(ort, ort->CreateSession(d->env, model_path, d->opts, &d->session),
                 "CreateSession")) goto fail;
     if (!ort_ok(ort, ort->GetAllocatorWithDefaultOptions(&d->allocator),

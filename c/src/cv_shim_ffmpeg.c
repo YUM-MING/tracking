@@ -150,7 +150,9 @@ static bool ensure_sws(CvsCapture *c)
     return c->sws && c->out;
 }
 
-int cvs_read(CvsCapture *c, uint8_t **data, int *w, int *h, int *stride)
+/* 프레임 1장 디코딩. convert=0이면 색 변환(sws_scale) 생략 — grab 전용. */
+static int decode_next(CvsCapture *c, int convert,
+                       uint8_t **data, int *w, int *h, int *stride)
 {
     if (!c || !c->fmt) return 0;
     for (;;) {
@@ -167,6 +169,8 @@ int cvs_read(CvsCapture *c, uint8_t **data, int *w, int *h, int *stride)
         if (rc == AVERROR(EAGAIN)) continue;        /* 프레임 완성 전 — 더 읽기 */
         if (rc < 0) return 0;
 
+        if (!convert) return 1;                     /* 스트림 전진만 (변환 생략) */
+
         if (!ensure_sws(c)) return 0;
         uint8_t *dst[4] = { c->out, NULL, NULL, NULL };
         int dst_stride[4] = { c->out_stride, 0, 0, 0 };
@@ -178,6 +182,16 @@ int cvs_read(CvsCapture *c, uint8_t **data, int *w, int *h, int *stride)
         *stride = c->out_stride;
         return 1;
     }
+}
+
+int cvs_read(CvsCapture *c, uint8_t **data, int *w, int *h, int *stride)
+{
+    return decode_next(c, 1, data, w, h, stride);
+}
+
+int cvs_grab(CvsCapture *c)
+{
+    return decode_next(c, 0, NULL, NULL, NULL, NULL);
 }
 
 void cvs_close(CvsCapture *c)

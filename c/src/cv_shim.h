@@ -23,6 +23,9 @@ typedef struct CvsCapture CvsCapture;
 CvsCapture *cvs_open(const char *source, int width, int height);
 /* 반환 버퍼(BGR)는 다음 cvs_read 호출 전까지 유효. 실패 시 0. */
 int cvs_read(CvsCapture *cap, uint8_t **data, int *w, int *h, int *stride);
+/* 프레임 1장을 소비(디코딩)만 하고 색 변환·복사는 생략. 실패 시 0.
+ * 추론에 쓰지 않을 프레임의 변환 비용을 없애는 디코딩 다이어트용 (9/22 회의). */
+int cvs_grab(CvsCapture *cap);
 void cvs_close(CvsCapture *cap);
 
 /* 디버그 표시 */
