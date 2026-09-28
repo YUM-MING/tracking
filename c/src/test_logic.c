@@ -348,15 +348,24 @@ static void test_camhealth(void)
     CHECK(!camhealth_check_frame(&ch, &f, 5.0, msg, sizeof(msg)),
           "동일 상태 중복 알림 없음");
 
-    /* 정상 복구 알림 */
+    /* 정상 복구 알림 — 복구도 연속 3회 확인 후에만 (플래핑 방지) */
     for (int y = 0; y < h; y++)
         for (int x = 0; x < w; x++) {
             uint8_t v = ((x / 8 + y / 8) % 2) ? 200 : 40;
             uint8_t *px = buf + (size_t)y * f.stride + (size_t)x * 3;
             px[0] = px[1] = px[2] = v;
         }
-    CHECK(camhealth_check_frame(&ch, &f, 6.0, msg, sizeof(msg)) &&
-          ch.state == CAM_OK, "복구 알림");
+    CHECK(!camhealth_check_frame(&ch, &f, 6.0, msg, sizeof(msg)), "복구 1회 미확정");
+    CHECK(!camhealth_check_frame(&ch, &f, 7.0, msg, sizeof(msg)), "복구 2회 미확정");
+    CHECK(camhealth_check_frame(&ch, &f, 8.0, msg, sizeof(msg)) &&
+          ch.state == CAM_OK, "복구 3회 연속 확정 알림");
+
+    /* 재알림 쿨다운: 10분 안에 같은 이상이 재발하면 상태만 바뀌고 침묵 */
+    memset(buf, 250, (size_t)w * h * 3);
+    camhealth_check_frame(&ch, &f, 9.0, msg, sizeof(msg));
+    camhealth_check_frame(&ch, &f, 10.0, msg, sizeof(msg));
+    CHECK(!camhealth_check_frame(&ch, &f, 11.0, msg, sizeof(msg)) &&
+          ch.state == CAM_WHITEOUT, "쿨다운 내 재발 — 알림 억제, 상태만 전환");
 
     /* 프레임 정지 감시 */
     camhealth_init(&ch, 10.0);
@@ -690,12 +699,12 @@ static void test_behavior(const PipelineConfig *base)
             make_person(2, 350, 100, 550, 500),   /* 중심 거리 250px < 1.5H */
         };
         ZoneFlags fl[2] = { 0 };
-        for (int s = 0; s < 8; s++) {
+        for (int s = 0; s < 12; s++) {           /* 확정 8샘플 + 초기 속도 미산정분 */
             swing_wrists(&ppl[0], s, 120);        /* 240px/샘플 ≈ 3.6H/s > 2.5 */
             behavior_update(b, ppl, 2, fl, 1.0 + s * DT);
         }
         CHECK(evq_pop(q, &ev, 0) && ev.kind == EV_VIOLENCE, "폭력 의심 감지");
-        for (int s = 8; s < 12; s++) {            /* 쿨다운 내 반복 없음 */
+        for (int s = 12; s < 16; s++) {           /* 쿨다운 내 반복 없음 */
             swing_wrists(&ppl[0], s, 120);
             behavior_update(b, ppl, 2, fl, 1.0 + s * DT);
         }

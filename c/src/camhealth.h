@@ -26,6 +26,9 @@ typedef enum {
 typedef struct {
     CamHealthState state;
     int abnormal_streak;       /* 연속 이상 판정 수 (디바운스) */
+    int ok_streak;             /* 연속 정상 판정 수 (복구도 디바운스 — 플래핑 방지) */
+    double last_alert_ts;      /* 마지막 이상 알림 시각 (재알림 쿨다운) */
+    bool alerted;              /* 이상 알림을 실제로 발행했는가 (복구 알림 짝 맞춤) */
     CamHealthState pending;    /* 연속 집계 중인 이상 종류 */
     double last_frame_ts;      /* 마지막 새 프레임 수신 시각 */
     uint64_t last_seq;

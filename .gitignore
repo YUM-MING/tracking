@@ -15,3 +15,4 @@ c/third_party/
 .venv/
 data/
 report_images/
+field_data/

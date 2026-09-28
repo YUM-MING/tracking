@@ -18,18 +18,18 @@
  * sense를 올리면 임계값이 낮아져 민감해진다 (effective = base / sense). */
 #define SWING_SPEED_BASE 2.5f  /* 고속 스윙 판정 손목 속도 */
 #define DROP_SPEED_BASE 1.5f   /* 낙상 판정 수직 급강하 속도 */
-#define VIOLENCE_DIST_H 1.5f   /* 폭력: 두 사람 중심 거리 상한 (H배) */
+#define VIOLENCE_DIST_H 1.2f   /* 폭력: 두 사람 중심 거리 상한 (H배) — 카페 실측 오탐으로 보수화 */
 #define VANDAL_ALONE_H 2.5f    /* 파손: 이 거리 안에 타인이 없어야 '단독' */
 #define VANDAL_BODY_MAX 0.6f   /* 파손: 제자리 판정 몸 속도 상한 */
 #define LOITER_MOVE_MIN 0.08f  /* 배회: '계속 이동' 판정 평균 몸 속도 하한 */
 
 /* 디바운스 (연속 샘플 수) — 추론 6회/초 기준 폭력 ≈ 0.7초, 파손 ≈ 1.3초 */
-#define VIOLENCE_CONFIRM 4
+#define VIOLENCE_CONFIRM 8      /* 연속 스윙 ~1.3초 (9월 카페 실측: 4샘플은 컵 젓기 오탐) */
 #define VANDAL_CONFIRM 8
 #define DROP_CONFIRM 2
 
 /* 쿨다운 (초) — 같은 상황 반복 알림 방지 */
-#define VIOLENCE_COOLDOWN 60.0
+#define VIOLENCE_COOLDOWN 180.0
 #define VANDAL_COOLDOWN 120.0
 #define RECO_COOLDOWN 90.0     /* 같은 손님에게 추천 컨텍스트 재발행 간격 */
 

@@ -255,7 +255,7 @@ static const PipelineConfig CFG_DEFAULT = {
 
     .obj_model = "yolo11n.onnx",
     .obj_imgsz = 320,
-    .obj_conf = 0.45f,
+    .obj_conf = 0.60f,            /* 카페 실측: 0.45는 반려동물 오탐 과다 (가방·의자) */
     .obj_every_k = 5,
 
     .age_model = "genderage.onnx",

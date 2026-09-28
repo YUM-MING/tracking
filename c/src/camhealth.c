@@ -5,6 +5,8 @@
 
 #define SAMPLE_STEP 8          /* 8px 간격 샘플링 (1280x720 → 약 14,400 픽셀) */
 #define CONFIRM_N 3            /* 연속 N회 이상일 때만 상태 확정 (플리커 방지) */
+#define REALERT_SEC 600.0      /* 같은 이상의 재알림 최소 간격 (경계값 플래핑 억제 —
+                                  9월 사내 카페 실측: 이상↔복구 반복 알림 197건) */
 
 /* 임계값 — 실측 기반 보수적 설정 (오탐지보다 미탐지가 낫다: 알람 신뢰도 우선) */
 #define WHITEOUT_LUMA 230.0    /* 평균 밝기 상한 */
@@ -32,6 +34,9 @@ void camhealth_init(CamHealth *ch, double now)
     ch->last_seq = 0;
     ch->mean_luma = 0;
     ch->grad = 0;
+    ch->ok_streak = 0;
+    ch->last_alert_ts = -1e9;
+    ch->alerted = false;
 }
 
 /* 성긴 샘플링으로 평균 밝기와 수평 그래디언트(디테일 양)를 잰다 */
@@ -68,21 +73,31 @@ static CamHealthState classify(double mean, double grad)
     return CAM_OK;
 }
 
-/* 디바운스 후 상태 전환. 전환 시에만 true + 알림 문구. */
-static bool transition(CamHealth *ch, CamHealthState judged,
+/* 디바운스 후 상태 전환. 전환 시에만 true + 알림 문구.
+ * 이상·복구 모두 연속 N회 확인(대칭 디바운스)하고, 같은 이상이 쿨다운 안에
+ * 반복되면 상태만 바꾸고 알림은 억제한다 — 경계값 근처 플래핑 대응. */
+static bool transition(CamHealth *ch, CamHealthState judged, double now,
                        char *msg, int msg_len)
 {
     if (judged == CAM_OK) {
         ch->abnormal_streak = 0;
         ch->pending = CAM_OK;
-        if (ch->state != CAM_OK) {                /* 이상 → 정상 복구 */
-            snprintf(msg, (size_t)msg_len, "카메라 상태 복구 (이전: %s)",
-                     camhealth_str(ch->state));
-            ch->state = CAM_OK;
-            return true;
+        if (ch->state == CAM_OK) {
+            ch->ok_streak = 0;
+            return false;
         }
-        return false;
+        if (++ch->ok_streak < CONFIRM_N)          /* 복구도 연속 확인 후에만 */
+            return false;
+        CamHealthState prev = ch->state;
+        ch->state = CAM_OK;
+        ch->ok_streak = 0;
+        if (!ch->alerted) return false;           /* 알린 적 없으면 복구도 침묵 */
+        ch->alerted = false;
+        snprintf(msg, (size_t)msg_len, "카메라 상태 복구 (이전: %s)",
+                 camhealth_str(prev));
+        return true;
     }
+    ch->ok_streak = 0;
     if (judged != ch->pending) {                  /* 다른 종류 이상 — 재집계 */
         ch->pending = judged;
         ch->abnormal_streak = 1;
@@ -91,6 +106,10 @@ static bool transition(CamHealth *ch, CamHealthState judged,
     if (++ch->abnormal_streak < CONFIRM_N || ch->state == judged)
         return false;
     ch->state = judged;
+    if (now - ch->last_alert_ts < REALERT_SEC)    /* 쿨다운 — 상태만 전환 */
+        return false;
+    ch->last_alert_ts = now;
+    ch->alerted = true;
     snprintf(msg, (size_t)msg_len,
              "카메라 이상 감지: %s — 현장 점검 필요 (밝기 %.0f / 디테일 %.1f)",
              camhealth_str(judged), ch->mean_luma, ch->grad);
@@ -112,7 +131,7 @@ bool camhealth_check_frame(CamHealth *ch, const FrameView *f, double now,
         /* 복구 알림 후 이번 프레임 판정은 다음 사이클부터 */
         return true;
     }
-    return transition(ch, classify(ch->mean_luma, ch->grad), msg, msg_len);
+    return transition(ch, classify(ch->mean_luma, ch->grad), now, msg, msg_len);
 }
 
 bool camhealth_check_freeze(CamHealth *ch, uint64_t published_seq, double now,
