@@ -36,6 +36,8 @@ cp "$DIR"/third_party/win/msvc_runtime_dlls/*.dll "$OUT/"
 cp "$DIR"/models/*.onnx "$OUT/"
 cp "$DIR/web/owner_page.html" "$OUT/"
 cp "$DIR"/win_pkg/*.bat "$DIR/win_pkg/README_설치안내.md" "$OUT/"
+# 파일럿 매장 사전 캘리브레이션 프리셋 (카페389 노량진 — 9/28 지시)
+cp "$DIR/win_pkg/store_settings.json" "$DIR/win_pkg/CAFE389_세팅안내.md" "$OUT/"
 
 # 3) zip (포터블판)
 STAMP=$(date +%Y%m%d)

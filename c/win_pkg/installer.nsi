@@ -35,7 +35,13 @@ SetCompressor /SOLID lzma
 
 Section "본체"
   SetOutPath "$INSTDIR"
+  ; 재설치 시 현장에서 조정한 설정 보존 (동봉 프리셋은 첫 설치에만 적용)
+  IfFileExists "$INSTDIR\store_settings.json" 0 +2
+    Rename "$INSTDIR\store_settings.json" "$INSTDIR\store_settings.keep"
   File /r "${DISTDIR}\*"
+  IfFileExists "$INSTDIR\store_settings.keep" 0 +3
+    Delete "$INSTDIR\store_settings.json"
+    Rename "$INSTDIR\store_settings.keep" "$INSTDIR\store_settings.json"
 
   ; 바로가기
   CreateShortCut "$DESKTOP\매장 트래킹 시작.lnk" "$INSTDIR\START.bat" "" "" 0 SW_SHOWNORMAL "" "무인매장 트래킹 시작 (자동 재시작 포함)"
@@ -65,6 +71,7 @@ Section "Uninstall"
   Delete "$INSTDIR\*.bat"
   Delete "$INSTDIR\owner_page.html"
   Delete "$INSTDIR\README_설치안내.md"
+  Delete "$INSTDIR\CAFE389_세팅안내.md"
   RMDir "$INSTDIR"                        ; 데이터가 남아 있으면 폴더는 유지됨
 
   Delete "$DESKTOP\매장 트래킹 시작.lnk"
