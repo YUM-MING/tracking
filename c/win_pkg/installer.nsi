@@ -72,6 +72,7 @@ Section "Uninstall"
   Delete "$INSTDIR\owner_page.html"
   Delete "$INSTDIR\README_설치안내.md"
   Delete "$INSTDIR\CAFE389_세팅안내.md"
+  Delete "$INSTDIR\카메라_설치_체크리스트.md"
   RMDir "$INSTDIR"                        ; 데이터가 남아 있으면 폴더는 유지됨
 
   Delete "$DESKTOP\매장 트래킹 시작.lnk"
