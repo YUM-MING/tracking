@@ -61,6 +61,7 @@ typedef struct {
     /* ── 2단계: 동적 ROI 트리거 조건 ──────────────────── */
     KioskTriggerMode kiosk_trigger_mode;
     float kiosk_face_w_frac;      /* 머리 폭 ≥ 화면 가로 비율 → 키오스크 사용 중 */
+    float kiosk_body_h_frac;      /* 근접 폴백: 몸 높이 ≥ 화면 세로 비율 (얼굴 미검출 대비, 1.0=끔) */
     Zone kiosk_zone;              /* zone 모드에서만 사용 */
     Zone table_zone;
     double table_dwell_trigger_sec;
@@ -210,6 +211,7 @@ static const PipelineConfig CFG_DEFAULT = {
 
     .kiosk_trigger_mode = KIOSK_TRIGGER_NEAR,
     .kiosk_face_w_frac = 0.13f,
+    .kiosk_body_h_frac = 0.75f,   /* 고개 숙임·역광으로 얼굴 안 잡혀도 몸이 화면 3/4 차면 근접 */
     .kiosk_zone = { "kiosk", 900, 100, 1280, 600 },
     .table_zone = { "table", 0, 300, 700, 720 },
     .table_dwell_trigger_sec = 180.0,

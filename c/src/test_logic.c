@@ -87,6 +87,23 @@ static void test_router(const PipelineConfig *cfg)
         router_destroy(r);
     }
 
+    /* 3.5) 몸 크기 폴백: 얼굴 미검출이어도 세로형 몸이 화면 75%+ 차면 근접 */
+    {
+        RoiRouter *r = router_create(cfg);
+        TrackedPerson p = make_person(9, 500, 60, 800, 660);   /* h=600/720=0.83 */
+        p.has_kpts = false;                                    /* 얼굴 정보 없음 */
+        int n = router_route(r, &frame, &p, 1, 0.0, targets, MAX_TARGETS, NULL);
+        CHECK(n == 1 && targets[0].reason == REASON_KIOSK_ENTER,
+              "몸 높이 폴백 키오스크 근접");
+        /* 가로형(쓰러짐 의심 형태) 박스는 폴백 제외 */
+        TrackedPerson q = make_person(9, 50, 60, 950, 660);    /* w=900/h=600=1.5 */
+        q.has_kpts = false;
+        n = router_route(r, &frame, &q, 1, 1.0, targets, MAX_TARGETS, NULL);
+        CHECK(n == 1 && targets[0].reason == REASON_FALL_SUSPECT,
+              "가로형 박스는 몸 폴백 제외 (쓰러짐 우선)");
+        router_destroy(r);
+    }
+
     /* 4) 테이블 구역 180초 정체 → table_dwell (그 전에는 트리거 없음) */
     {
         RoiRouter *r = router_create(cfg);

@@ -217,6 +217,11 @@
       <div class="range-hint">얼굴이 화면 가로의 이 비율 이상이면 키오스크 사용 중</div>
     </div>
     <div class="slider">
+      <label>키오스크 근접 폴백 (몸 높이 비율) <b id="v-body">–</b></label>
+      <input type="range" id="kiosk_body_h_frac" min="0.3" max="1.0" step="0.05">
+      <div class="range-hint">얼굴이 안 잡혀도 몸이 화면 세로의 이 비율 이상이면 근접 (1.0 = 끔)</div>
+    </div>
+    <div class="slider">
       <label>감지 민감도 (검출 신뢰도) <b id="v-conf">–</b></label>
       <input type="range" id="yolo_conf" min="0.10" max="0.90" step="0.05">
       <div class="range-hint">낮을수록 민감 (유령 인식이 잦으면 올리세요)</div>
@@ -391,7 +396,7 @@ const RULES = ["rule_fall","rule_announce","rule_no_kiosk_sit","rule_assist","ru
                "rule_group_mismatch","rule_violence","rule_vandalism","rule_loitering",
                "rule_tampering","rule_clean","rule_reco"];
 const SLIDERS = ["table_dwell_trigger_sec","announce_dwell_sec","announce_cooldown_sec",
-                 "no_kiosk_sit_grace_sec","fall_aspect_ratio","kiosk_face_w_frac",
+                 "no_kiosk_sit_grace_sec","fall_aspect_ratio","kiosk_face_w_frac","kiosk_body_h_frac",
                  "yolo_conf","detect_every_n","fall_confirm_frames",
                  "stay_per_purchase_sec","activity_min_move","eco_idle_sec",
                  "obj_conf","obj_every_k","kids_age_limit","supply_abuse_visits",
@@ -430,6 +435,7 @@ function renderSliderLabels() {
   $("v-grace").textContent = fmtSec($("no_kiosk_sit_grace_sec").value);
   $("v-fall").textContent = (+$("fall_aspect_ratio").value).toFixed(2);
   $("v-face").textContent = (+$("kiosk_face_w_frac").value).toFixed(3);
+  $("v-body").textContent = (+$("kiosk_body_h_frac").value).toFixed(2);
   $("v-conf").textContent = (+$("yolo_conf").value).toFixed(2);
   $("v-every").textContent = $("detect_every_n").value + "프레임";
   $("v-fallframes").textContent = $("fall_confirm_frames").value + "회";

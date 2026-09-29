@@ -44,7 +44,8 @@ typedef struct {
     double stay_per_purchase_sec;     /* 결제 1건당 허용 체류 */
     double eco_idle_sec;              /* 무인 판정 시간 */
     float fall_aspect_ratio;          /* 쓰러짐 민감도 (클수록 둔감) */
-    float kiosk_face_w_frac;          /* 키오스크 근접 민감도 */
+    float kiosk_face_w_frac;          /* 키오스크 근접 민감도 (얼굴) */
+    float kiosk_body_h_frac;          /* 키오스크 근접 폴백 (몸 높이, 1.0=끔) */
     float yolo_conf;                  /* 검출 신뢰도 (감지 민감도의 역방향) */
     float activity_min_move;          /* 작업 판정 손목 움직임 임계 */
     int detect_every_n;               /* 분석 주기 (N프레임당 1회 추론) */

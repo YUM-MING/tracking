@@ -78,14 +78,24 @@ static bool check_fall(const RoiRouter *r, const TrackedPerson *p)
 }
 
 /*
- * 얼굴(머리 폭)이 화면 가로 대비 일정 비율 이상 = 키오스크 사용 중.
- * 몸통 BBox는 앉은 자세/상반신만 잡혀도 커져서 애매하므로 쓰지 않는다.
+ * 키오스크 근접 판정 (키오스크 부착 카메라 전제):
+ * 1) 얼굴(머리 폭)이 화면 가로 대비 일정 비율 이상 = 사용 중 (주 기준)
+ * 2) 폴백: 고개 숙임·역광·모자로 얼굴이 안 잡혀도, 세로형(서 있는) 몸이
+ *    화면 세로를 크게 채우면 근접으로 인정 (9/30 — 주문 동선 ID 연결 보강).
+ *    가로형(쓰러짐 의심) 박스는 제외해 쓰러짐 판정과 충돌하지 않는다.
  */
-static bool is_kiosk_near(const RoiRouter *r, const TrackedPerson *p, int frame_w)
+static bool is_kiosk_near(const RoiRouter *r, const TrackedPerson *p,
+                          int frame_w, int frame_h)
 {
     float fw = person_face_width(p, r->cfg->kpt_valid_conf);
-    if (fw < 0) return false;
-    return fw / (float)(frame_w > 1 ? frame_w : 1) >= r->cfg->kiosk_face_w_frac;
+    if (fw >= 0 &&
+        fw / (float)(frame_w > 1 ? frame_w : 1) >= r->cfg->kiosk_face_w_frac)
+        return true;
+
+    float bw = p->bbox[2] - p->bbox[0];
+    float bh = p->bbox[3] - p->bbox[1];
+    return bw < bh && r->cfg->kiosk_body_h_frac < 0.999f &&
+           bh / (float)(frame_h > 1 ? frame_h : 1) >= r->cfg->kiosk_body_h_frac;
 }
 
 /* BBox에 패딩을 더해 프레임 경계로 클램프한 크롭 사각형 */
@@ -124,7 +134,7 @@ int router_route(RoiRouter *r, const FrameView *frame,
 
         /* 키오스크 판정: near 모드(부착 카메라)는 얼굴 크기 비율, zone 모드는 화면 구역 */
         bool at_kiosk = (cfg->kiosk_trigger_mode == KIOSK_TRIGGER_NEAR)
-            ? is_kiosk_near(r, p, frame->w)
+            ? is_kiosk_near(r, p, frame->w, frame->h)
             : zone_contains(&cfg->kiosk_zone, p->center_x, p->center_y);
 
         /* 테이블 체류 타이머는 트리거 우선순위와 무관하게 구역 기준으로만 관리

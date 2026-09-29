@@ -47,6 +47,7 @@ static void from_cfg(const PipelineConfig *cfg, StoreSettings *st)
     st->eco_idle_sec = cfg->eco_idle_sec;
     st->fall_aspect_ratio = cfg->fall_aspect_ratio;
     st->kiosk_face_w_frac = cfg->kiosk_face_w_frac;
+    st->kiosk_body_h_frac = cfg->kiosk_body_h_frac;
     st->yolo_conf = cfg->yolo_conf;
     st->activity_min_move = cfg->activity_min_move;
     st->detect_every_n = cfg->detect_every_n;
@@ -100,6 +101,7 @@ void settings_apply_to_cfg(const StoreSettings *st, PipelineConfig *cfg)
     cfg->eco_idle_sec = st->eco_idle_sec;
     cfg->fall_aspect_ratio = st->fall_aspect_ratio;
     cfg->kiosk_face_w_frac = st->kiosk_face_w_frac;
+    cfg->kiosk_body_h_frac = st->kiosk_body_h_frac;
     cfg->yolo_conf = st->yolo_conf;
     cfg->activity_min_move = st->activity_min_move;
     cfg->detect_every_n = st->detect_every_n;
@@ -175,6 +177,7 @@ static void sanitize(StoreSettings *st)
     st->eco_idle_sec = CLAMPD(st->eco_idle_sec, 30, 3600);
     st->fall_aspect_ratio = (float)CLAMPD(st->fall_aspect_ratio, 1.0, 3.0);
     st->kiosk_face_w_frac = (float)CLAMPD(st->kiosk_face_w_frac, 0.03, 0.5);
+    st->kiosk_body_h_frac = (float)CLAMPD(st->kiosk_body_h_frac, 0.3, 1.0);
     st->yolo_conf = (float)CLAMPD(st->yolo_conf, 0.10, 0.90);
     st->activity_min_move = (float)CLAMPD(st->activity_min_move, 0.005, 0.10);
     st->detect_every_n = (int)CLAMPD(st->detect_every_n, 1, 30);
@@ -238,6 +241,7 @@ static void parse_into(const char *json, StoreSettings *st)
     if (json_num(json, "eco_idle_sec", &d)) st->eco_idle_sec = d;
     if (json_num(json, "fall_aspect_ratio", &d)) st->fall_aspect_ratio = (float)d;
     if (json_num(json, "kiosk_face_w_frac", &d)) st->kiosk_face_w_frac = (float)d;
+    if (json_num(json, "kiosk_body_h_frac", &d)) st->kiosk_body_h_frac = (float)d;
     if (json_num(json, "yolo_conf", &d)) st->yolo_conf = (float)d;
     if (json_num(json, "activity_min_move", &d)) st->activity_min_move = (float)d;
     if (json_num(json, "detect_every_n", &d)) st->detect_every_n = (int)d;
@@ -298,6 +302,7 @@ static int serialize(const StoreSettings *st, char *buf, size_t len)
         "  \"eco_idle_sec\": %.0f,\n"
         "  \"fall_aspect_ratio\": %.2f,\n"
         "  \"kiosk_face_w_frac\": %.3f,\n"
+        "  \"kiosk_body_h_frac\": %.3f,\n"
         "  \"yolo_conf\": %.2f,\n"
         "  \"activity_min_move\": %.3f,\n"
         "  \"detect_every_n\": %d,\n"
@@ -347,6 +352,7 @@ static int serialize(const StoreSettings *st, char *buf, size_t len)
         st->announce_cooldown_sec, st->no_kiosk_sit_grace_sec,
         st->stay_per_purchase_sec, st->eco_idle_sec,
         (double)st->fall_aspect_ratio, (double)st->kiosk_face_w_frac,
+        (double)st->kiosk_body_h_frac,
         (double)st->yolo_conf, (double)st->activity_min_move,
         st->detect_every_n, st->fall_confirm_frames,
         st->open_min, st->close_min,
